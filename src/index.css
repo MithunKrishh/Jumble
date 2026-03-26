@@ -1,0 +1,198 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+@layer base {
+  :root {
+    /* JUMBLE Design System - Calm, Intelligent, Reassuring */
+    
+    /* Background palette - warm, not stark */
+    --background: 40 33% 98%;
+    --foreground: 220 25% 15%;
+    
+    /* Card surfaces */
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 15%;
+    
+    /* Popover */
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 15%;
+    
+    /* Primary - Calm teal/sage */
+    --primary: 168 45% 42%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 168 35% 92%;
+    --primary-glow: 168 50% 55%;
+    
+    /* Secondary - Warm neutral */
+    --secondary: 35 25% 94%;
+    --secondary-foreground: 220 25% 25%;
+    
+    /* Muted */
+    --muted: 35 15% 93%;
+    --muted-foreground: 220 15% 50%;
+    
+    /* Accent - Soft coral for highlights */
+    --accent: 15 75% 65%;
+    --accent-foreground: 0 0% 100%;
+    --accent-soft: 15 60% 95%;
+    
+    /* Risk levels - informative, not alarming */
+    --risk-low: 145 50% 45%;
+    --risk-low-soft: 145 40% 92%;
+    --risk-medium: 38 85% 55%;
+    --risk-medium-soft: 38 70% 92%;
+    --risk-high: 12 70% 55%;
+    --risk-high-soft: 12 60% 93%;
+    
+    /* Effort vs Marks colors */
+    --effort-low: 145 50% 45%;
+    --effort-medium: 200 60% 50%;
+    --effort-high: 280 45% 55%;
+    
+    /* Destructive */
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 100%;
+    
+    /* Border and inputs */
+    --border: 35 20% 88%;
+    --input: 35 20% 88%;
+    --ring: 168 45% 42%;
+    
+    --radius: 1rem;
+    
+    /* Shadows */
+    --shadow-soft: 0 2px 8px -2px hsl(220 25% 15% / 0.06), 0 4px 16px -4px hsl(220 25% 15% / 0.08);
+    --shadow-card: 0 1px 3px hsl(220 25% 15% / 0.04), 0 4px 12px -2px hsl(220 25% 15% / 0.06);
+    --shadow-elevated: 0 8px 30px -8px hsl(220 25% 15% / 0.12);
+    
+    /* Sidebar */
+    --sidebar-background: 40 25% 97%;
+    --sidebar-foreground: 220 25% 25%;
+    --sidebar-primary: 168 45% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 35 25% 94%;
+    --sidebar-accent-foreground: 220 25% 25%;
+    --sidebar-border: 35 20% 90%;
+    --sidebar-ring: 168 45% 42%;
+  }
+
+  .dark {
+    --background: 220 25% 8%;
+    --foreground: 35 20% 95%;
+    
+    --card: 220 20% 12%;
+    --card-foreground: 35 20% 95%;
+    
+    --popover: 220 20% 12%;
+    --popover-foreground: 35 20% 95%;
+    
+    --primary: 168 45% 50%;
+    --primary-foreground: 220 25% 8%;
+    --primary-soft: 168 30% 18%;
+    
+    --secondary: 220 15% 18%;
+    --secondary-foreground: 35 20% 90%;
+    
+    --muted: 220 15% 18%;
+    --muted-foreground: 35 15% 60%;
+    
+    --accent: 15 65% 55%;
+    --accent-foreground: 0 0% 100%;
+    --accent-soft: 15 40% 18%;
+    
+    --border: 220 15% 20%;
+    --input: 220 15% 20%;
+    --ring: 168 45% 50%;
+    
+    --sidebar-background: 220 20% 10%;
+    --sidebar-foreground: 35 20% 90%;
+    --sidebar-primary: 168 45% 50%;
+    --sidebar-primary-foreground: 220 25% 8%;
+    --sidebar-accent: 220 15% 16%;
+    --sidebar-accent-foreground: 35 20% 90%;
+    --sidebar-border: 220 15% 18%;
+    --sidebar-ring: 168 45% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+}
+
+@layer components {
+  /* Card variants */
+  .card-elevated {
+    @apply bg-card rounded-2xl;
+    box-shadow: var(--shadow-card);
+  }
+  
+  .card-interactive {
+    @apply bg-card rounded-2xl transition-all duration-300;
+    box-shadow: var(--shadow-card);
+  }
+  
+  .card-interactive:hover {
+    box-shadow: var(--shadow-elevated);
+    transform: translateY(-2px);
+  }
+  
+  /* Why badge for explanations */
+  .why-badge {
+    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-accent-soft text-accent cursor-help;
+  }
+  
+  /* Risk indicator styles */
+  .risk-low {
+    @apply bg-risk-low-soft text-risk-low;
+  }
+  
+  .risk-medium {
+    @apply bg-risk-medium-soft text-risk-medium;
+  }
+  
+  .risk-high {
+    @apply bg-risk-high-soft text-risk-high;
+  }
+  
+  /* Priority badge */
+  .priority-badge {
+    @apply inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold;
+  }
+  
+  /* Smooth scroll */
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer utilities {
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary-glow;
+  }
+  
+  /* Subtle pattern background */
+  .pattern-dots {
+    background-image: radial-gradient(hsl(var(--border)) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  
+  /* Glass effect */
+  .glass {
+    @apply bg-card/80 backdrop-blur-lg;
+  }
+}
