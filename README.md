@@ -1,73 +1,274 @@
-# Welcome to your Lovable project
+# 🧠 JUMBLE — Academic Intelligence Platform
 
-## Project info
+JUMBLE is a high-fidelity academic intelligence platform designed to help students make **smarter study decisions with limited time**. Instead of overwhelming users with data, JUMBLE focuses on **clarity, prioritization, and explainability**—so students always know:
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+> **What to study, why it matters, and what to do next.**
 
-## How can I edit this code?
+---
 
-There are several ways of editing your application.
+## ✨ Core Idea
 
-**Use Lovable**
+Students often struggle with:
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+* Too much syllabus, too little time
+* No clear prioritization
+* Inefficient study planning
+* Lack of insight from previous exam trends
 
-Changes made via Lovable will be committed automatically to this repo.
+JUMBLE solves this using **data-driven insights + adaptive planning**.
 
-**Use your preferred IDE**
+---
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+## 🚀 Key Features
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### 📊 1. PYQ → Topic Importance Scoring
 
-Follow these steps:
+* Analyzes Previous Year Questions (PYQs)
+* Assigns **importance weightage** to each topic
+* Helps identify **high-frequency, high-impact topics**
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+---
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+### ⚖️ 2. Effort vs Marks Optimization
 
-# Step 3: Install the necessary dependencies.
-npm i
+* Compares **effort required vs expected marks gain**
+* Identifies:
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+  * High-return topics (low effort, high marks)
+  * Time-consuming low-return areas
+* Enables **smart decision-making under time pressure**
+
+---
+
+### 📌 3. Topic Priority Ranking
+
+* Ranks topics based on:
+
+  * Importance (from PYQs)
+  * Difficulty level
+  * Student proficiency
+* Produces a **clear “what to study first” list**
+
+---
+
+### 🗓️ 4. Adaptive Daily Schedule
+
+* Generates a **personalized daily study plan**
+* Dynamically adjusts based on:
+
+  * Missed tasks
+  * Performance changes
+  * Time availability
+* Ensures continuous alignment with goals
+
+---
+
+### ⚠️ 5. Academic Risk Score
+
+* A simple indicator of preparation risk
+* Based on:
+
+  * Coverage
+  * Weak topics
+  * Time remaining
+* Designed to be **informative, not stressful**
+
+---
+
+### 💡 6. Explainable Recommendations
+
+Every insight in JUMBLE includes a **“WHY” explanation**, so users always understand:
+
+* Why a topic is prioritized
+* Why something is risky
+* Why a schedule changed
+
+---
+
+## 🔐 Authentication & Access
+
+### Public (Unauthenticated Users)
+
+Users can access:
+
+* Landing Page
+* How It Works section
+* Login / Register pages
+
+> ❌ Dashboard is NOT visible before login
+
+---
+
+### Logged-In Users
+
+Users gain access to:
+
+* Personalized Dashboard
+* Study Insights
+* Adaptive Planning Tools
+
+---
+
+## 🧭 Navigation Behavior
+
+### 🔓 Not Logged In
+
+* JUMBLE (Logo)
+* How It Works
+* Log In
+
+---
+
+### 🔒 Logged In
+
+* JUMBLE (Logo)
+* Dashboard
+* Profile (User Name)
+* Log Out
+
+---
+
+## 🖥️ Dashboard Experience
+
+### 🟡 State 1: First-Time User (Setup Mode)
+
+Guided onboarding experience with:
+
+* **Set Exam Context (Required)**
+
+  * Exam name
+  * Exam date
+  * Subjects
+
+* **Upload PYQs (Optional)**
+
+  * PDF upload
+  * Skip option available
+
+* **Confirm Topics / Syllabus**
+
+  * Editable topic list
+
+* **Study Availability (Optional)**
+
+  * Daily time
+  * Self-confidence per subject
+
+💬 Supportive UX:
+
+> “You can skip this for now — JUMBLE adapts as you go.”
+
+---
+
+### 🟢 State 2: Active User (Insight Mode)
+
+Displays:
+
+* 📌 Topic Priority Ranking
+* 🗓️ Adaptive Daily Plan
+* ⚠️ Academic Risk Score
+* 📊 Key Insights for Today
+
+Each insight includes:
+
+> ✅ A clear explanation (“WHY”)
+
+---
+
+## 🎨 Design System
+
+### 🌈 Color Palette
+
+* Primary: Soft Indigo / Blue
+* Secondary: Muted Teal
+* Background: Clean White / Light Gray
+* Accent: Subtle Warm Highlights
+
+---
+
+### ✍️ Typography
+
+* Headings: Clean, modern sans-serif
+* Body: Highly readable, minimal contrast strain
+
+---
+
+### 🧩 UI Style
+
+* Soft rounded corners
+* Spacious layout
+* Calm and distraction-free
+* Friendly abstract visuals
+* No gamification elements
+
+---
+
+## 🏗️ Tech & Architecture
+
+* **Frontend:** React (Component-Based Architecture)
+* **Design Approach:** Desktop-first, responsive
+* **State Management:** Context / Hooks (or Redux optional)
+* **Backend (optional):** Node.js + Express
+* **Database (optional):** MongoDB
+
+---
+
+## 📁 Project Structure (Example)
+
+```
+/src
+ ├── components
+ │    ├── Navbar
+ │    ├── Cards
+ │    ├── Dashboard
+ │    └── Forms
+ │
+ ├── pages
+ │    ├── Landing
+ │    ├── Login
+ │    ├── Register
+ │    └── Dashboard
+ │
+ ├── utils
+ ├── hooks
+ └── assets
 ```
 
-**Edit a file directly in GitHub**
+---
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## 🎯 UX Philosophy
 
-**Use GitHub Codespaces**
+JUMBLE is built on three principles:
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+### 1. Clarity over Complexity
 
-## What technologies are used for this project?
+No overwhelming dashboards. Only meaningful insights.
 
-This project is built with:
+### 2. Guidance over Control
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+The system suggests, not forces.
 
-## How can I deploy this project?
+### 3. Explainability over Blind AI
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+Every recommendation answers:
 
-## Can I connect a custom domain to my Lovable project?
+> “Why should I do this?”
 
-Yes, you can!
+---
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## 🧪 Future Enhancements
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+* Smart revision planner
+* Subject-wise deep analytics
+* Collaborative study insights
+* AI-powered doubt detection
+
+---
+
+## 📌 Final Thought
+
+JUMBLE is not just a study planner.
+
+It is a **decision-support system for students**, designed to reduce confusion and maximize impact.
+
+> **Study less blindly. Study more intelligently.**
