@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { dashboardStorage } from "@/services/dashboardStorage";
 
 interface Profile {
   id: string;
@@ -17,7 +18,7 @@ interface ExamContext {
   exam_name: string;
   exam_date: string;
   subjects: string[];
-  daily_study_hours: number;
+  daily_study_hours: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -34,6 +35,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   refreshExamContext: () => Promise<void>;
+  refreshSetupStatus: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -44,6 +46,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [examContext, setExamContext] = useState<ExamContext | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [setupStatusVersion, setSetupStatusVersion] = useState(0);
 
   const fetchProfile = async (userId: string) => {
     const { data, error } = await supabase
@@ -83,6 +86,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const refreshSetupStatus = () => {
+    setSetupStatusVersion((current) => current + 1);
+  };
+
   useEffect(() => {
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -104,19 +111,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setIsLoading(false);
       }
     );
-
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        fetchProfile(session.user.id);
-        fetchExamContext(session.user.id);
-      }
-
-      setIsLoading(false);
-    });
 
     return () => subscription.unsubscribe();
   }, []);
@@ -153,7 +147,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setExamContext(null);
   };
 
-  const hasCompletedSetup = !!examContext;
+  const hasCompletedSetup = !!examContext && !!user;
+
+  // This reference ensures context consumers re-evaluate setup state after local reset toggles.
+  void setupStatusVersion;
 
   return (
     <AuthContext.Provider
@@ -169,6 +166,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         signOut,
         refreshProfile,
         refreshExamContext,
+        refreshSetupStatus,
       }}
     >
       {children}

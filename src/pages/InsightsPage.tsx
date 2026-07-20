@@ -1,6 +1,5 @@
 import { AuthenticatedNavbar } from "@/components/AuthenticatedNavbar";
 import { WhyBadge } from "@/components/WhyBadge";
-import { RiskScore } from "@/components/RiskScore";
 import { 
   Lightbulb, 
   TrendingUp, 
@@ -14,55 +13,60 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 const InsightsPage = () => {
-  const insights = [
-    {
-      type: "positive",
-      title: "Calculus is Your Strength",
-      description: "Your 80% proficiency in differentiation puts you ahead. A 15-minute revision before exams will secure these marks.",
-      action: "Quick Revision",
-      actionLink: "/schedule",
-      icon: CheckCircle,
-      explanation: "Based on your practice test scores and consistent performance in calculus-related topics.",
-    },
-    {
-      type: "warning",
-      title: "Thermodynamics Needs Attention",
-      description: "This topic carries 15% weightage but your proficiency is only 45%. Prioritizing this can boost your score by 8 marks.",
-      action: "Start Learning",
-      actionLink: "/schedule",
-      icon: AlertTriangle,
-      explanation: "High exam weightage (15%) combined with low proficiency (45%) makes this critical.",
-    },
-    {
-      type: "opportunity",
-      title: "Quick Win Available",
-      description: "Integration techniques are high-frequency with low effort. 2 hours of focused study can secure 12 marks.",
-      action: "Grab This Win",
-      actionLink: "/topics",
-      icon: Lightbulb,
-      explanation: "This topic appears in 90% of exams and requires minimal effort based on your current understanding.",
-    },
-    {
-      type: "positive",
-      title: "Ahead of Schedule",
-      description: "You've completed 50% of topics with 14 days remaining. This pace allows for revision time.",
-      action: "View Schedule",
-      actionLink: "/schedule",
-      icon: TrendingUp,
-      explanation: "At current pace, you'll finish core topics with 4 days to spare for revision.",
-    },
-    {
-      type: "warning",
-      title: "Organic Chemistry Gap",
-      description: "Low proficiency (30%) in a topic that frequently appears. Consider increasing study time allocation.",
-      action: "Adjust Plan",
-      actionLink: "/schedule",
-      icon: TrendingDown,
-      explanation: "72% exam frequency with only 30% proficiency creates significant risk.",
-    },
-  ];
+  const [insights, setInsights] = useState<any[]>([]);
+  const [coverageData, setCoverageData] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const { data: topicsData, error: topicsError } = await supabase
+          .from("topics" as any)
+          .select("*");
+        
+        if (topicsError) throw topicsError;
+
+        const { data: perfData, error: perfError } = await supabase
+          .from("user_performance" as any)
+          .select("*");
+
+        if (perfError) throw perfError;
+
+        if (perfData) {
+          const formattedCoverage = (perfData as any[]).map(p => ({
+            topic: p.topic_name,
+            coverage: p.coverage_percentage,
+            status: p.status
+          }));
+          setCoverageData(formattedCoverage);
+        }
+        
+        if (topicsData && topicsData.length > 0) {
+          const dynamicInsights = (topicsData as any[]).slice(0, 5).map(t => ({
+            type: t.effort === "low" ? "opportunity" : t.proficiency > 70 ? "positive" : "warning",
+            title: `${t.name} Insight`,
+            description: t.explanation || "Review this topic based on your current proficiency.",
+            action: t.proficiency < 50 ? "Start Learning" : "Quick Revision",
+            actionLink: "/schedule",
+            icon: t.proficiency > 70 ? CheckCircle : t.effort === "low" ? Lightbulb : AlertTriangle,
+            explanation: `Based on your proficiency of ${t.proficiency}%.`
+          }));
+          setInsights(dynamicInsights);
+        } else {
+          setInsights([]);
+        }
+      } catch (error) {
+        console.error("Error fetching insights data:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
 
   const getTypeStyles = (type: string) => {
     switch (type) {
@@ -89,15 +93,6 @@ const InsightsPage = () => {
         return "text-muted-foreground";
     }
   };
-
-  const coverageData = [
-    { topic: "Calculus", coverage: 85, status: "strong" },
-    { topic: "Mechanics", coverage: 75, status: "good" },
-    { topic: "Thermodynamics", coverage: 45, status: "needs-work" },
-    { topic: "Electromagnetism", coverage: 40, status: "needs-work" },
-    { topic: "Organic Chemistry", coverage: 30, status: "critical" },
-    { topic: "Inorganic Chemistry", coverage: 50, status: "good" },
-  ];
 
   const getCoverageColor = (status: string) => {
     switch (status) {
@@ -138,7 +133,11 @@ const InsightsPage = () => {
           <div className="lg:col-span-2 space-y-4">
             <h2 className="text-lg font-semibold text-foreground mb-4">Personalized Insights</h2>
             
-            {insights.map((insight, index) => {
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading insights...</div>
+            ) : insights.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">No insights generated yet. Add topics to get started.</div>
+            ) : insights.map((insight, index) => {
               const Icon = insight.icon;
               return (
                 <div 
@@ -178,9 +177,6 @@ const InsightsPage = () => {
 
           {/* Sidebar */}
           <div className="space-y-6">
-            {/* Risk Score */}
-            <RiskScore score={38} label="Overall Risk" />
-
             {/* Topic Coverage */}
             <div className="card-elevated p-6">
               <div className="flex items-center justify-between mb-4">
@@ -189,7 +185,11 @@ const InsightsPage = () => {
               </div>
               
               <div className="space-y-4">
-                {coverageData.map((item, index) => (
+                {isLoading ? (
+                  <div className="text-sm text-muted-foreground">Loading coverage...</div>
+                ) : coverageData.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No coverage data available.</div>
+                ) : coverageData.map((item, index) => (
                   <div key={index}>
                     <div className="flex justify-between text-sm mb-1">
                       <span className="text-muted-foreground">{item.topic}</span>
