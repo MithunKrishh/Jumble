@@ -6,7 +6,7 @@ JUMBLE is a high-fidelity academic intelligence platform designed to help studen
 
 ---
 
-## ✨ Core Idea
+## ✨ Core Ideas
 
 Students often struggle with:
 
