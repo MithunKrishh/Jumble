@@ -11,72 +11,56 @@ import {
   CheckCircle2,
   AlertCircle
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 const SchedulePage = () => {
-  const [currentDate] = useState(new Date());
-  
-  const todaySchedule = [
-    {
-      id: "1",
-      time: "9:00 AM",
-      topic: "Thermodynamics - First Law",
-      duration: "45 min",
-      status: "completed" as const,
-      explanation: "Foundation concepts completed.",
-    },
-    {
-      id: "2",
-      time: "10:00 AM",
-      topic: "Thermodynamics - Practice Problems",
-      duration: "30 min",
-      status: "current" as const,
-      explanation: "Practice reinforces concepts and improves recall by 40%.",
-    },
-    {
-      id: "3",
-      time: "11:00 AM",
-      topic: "Calculus - Integration Revision",
-      duration: "20 min",
-      status: "upcoming" as const,
-      explanation: "Quick refresh to maintain your strong foundation.",
-    },
-    {
-      id: "4",
-      time: "2:00 PM",
-      topic: "Organic Chemistry - Reaction Basics",
-      duration: "45 min",
-      status: "upcoming" as const,
-      explanation: "Building foundational understanding for complex mechanisms.",
-    },
-    {
-      id: "5",
-      time: "3:00 PM",
-      topic: "Electromagnetism - Maxwell Intro",
-      duration: "30 min",
-      status: "upcoming" as const,
-      explanation: "Strategic topic for exam coverage.",
-    },
-    {
-      id: "6",
-      time: "4:30 PM",
-      topic: "Review & Summary",
-      duration: "15 min",
-      status: "upcoming" as const,
-      explanation: "End-of-day review consolidates learning.",
-    },
-  ];
-
   const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const dates = [14, 15, 16, 17, 18, 19, 20];
   const todayIndex = 2; // Wednesday
 
-  const weeklyStats = {
+  const [currentDate] = useState(new Date());
+  const [todaySchedule, setTodaySchedule] = useState<any[]>([]);
+  const [weeklyStats, setWeeklyStats] = useState({
     planned: 28,
     completed: 12,
     missed: 2,
     upcoming: 14,
-  };
+  });
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const { data: topicsData, error } = await supabase
+          .from("topics" as any)
+          .select("*");
+        
+        if (error) throw error;
+        
+        if (topicsData && topicsData.length > 0) {
+          const schedule = (topicsData as any[]).slice(0, 6).map((t, idx) => ({
+            id: t.id,
+            time: `${9 + idx}:00 AM`,
+            topic: `${t.subject} - ${t.name}`,
+            duration: "45 min",
+            status: idx === 0 ? "completed" : idx === 1 ? "current" : "upcoming",
+            explanation: t.explanation || "Planned study session."
+          }));
+          
+          setTodaySchedule(schedule);
+        } else {
+          setTodaySchedule([]);
+        }
+      } catch (err) {
+        console.error("Error fetching schedule data:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchData();
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -145,7 +129,13 @@ const SchedulePage = () => {
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Today's Schedule */}
           <div className="lg:col-span-2">
-            <DailyScheduleCard items={todaySchedule} />
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading schedule...</div>
+            ) : todaySchedule.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">No schedule generated yet. Add topics to get started.</div>
+            ) : (
+              <DailyScheduleCard items={todaySchedule} />
+            )}
 
             {/* Adjustment Notice */}
             <div className="card-elevated p-4 mt-6 border-l-4 border-accent">

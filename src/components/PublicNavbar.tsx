@@ -3,13 +3,16 @@ import { Link } from "react-router-dom";
 import { Button } from "./ui/button";
 import { Menu, X } from "lucide-react";
 
-export const PublicNavbar = () => {
+interface PublicNavbarProps {
+  onHowItWorksClick?: () => void;
+}
+
+export const PublicNavbar = ({ onHowItWorksClick }: PublicNavbarProps) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const scrollToHowItWorks = () => {
-    const element = document.getElementById("how-it-works");
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" });
+  const handleHowItWorks = () => {
+    if (onHowItWorksClick) {
+      onHowItWorksClick();
     }
     setMobileMenuOpen(false);
   };
@@ -29,7 +32,7 @@ export const PublicNavbar = () => {
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-6">
             <button 
-              onClick={scrollToHowItWorks}
+              onClick={handleHowItWorks}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               How It Works
@@ -54,7 +57,7 @@ export const PublicNavbar = () => {
         <div className="md:hidden border-t border-border bg-card">
           <div className="px-4 py-3 space-y-1">
             <button
-              onClick={scrollToHowItWorks}
+              onClick={handleHowItWorks}
               className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary w-full text-left"
             >
               How It Works

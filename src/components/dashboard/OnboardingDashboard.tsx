@@ -1,310 +1,395 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Slider } from "@/components/ui/slider";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { 
-  Calendar as CalendarIcon, 
-  BookOpen, 
-  Upload, 
-  Clock, 
-  CheckCircle,
-  ArrowRight,
-  Sparkles,
-  X,
-  Plus
-} from "lucide-react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { ArrowRight, Calendar as CalendarIcon, Loader2, Plus, Sparkles, X } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { dashboardStorage } from "@/services/dashboardStorage";
+import { DashboardState } from "@/types/dashboard";
 
 interface OnboardingDashboardProps {
   userName: string;
 }
 
-export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
-  const { user, refreshExamContext } = useAuth();
-  const navigate = useNavigate();
+const steps = [
+  "Exam Details",
+  "Subjects",
+  "Study Materials",
+  "Availability"
+];
 
+export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
+  const { user, refreshExamContext, refreshSetupStatus } = useAuth();
+
+  const [step, setStep] = useState(1);
   const [examName, setExamName] = useState("");
   const [examDate, setExamDate] = useState<Date>();
   const [subjects, setSubjects] = useState<string[]>([]);
   const [newSubject, setNewSubject] = useState("");
-  const [dailyHours, setDailyHours] = useState("4");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [studyMaterials, setStudyMaterials] = useState("");
+  const [dailyHours, setDailyHours] = useState([4]);
+  
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStage, setProcessingStage] = useState(0);
 
-  const [completedSteps, setCompletedSteps] = useState({
-    exam: false,
-    subjects: false,
-    availability: false,
-  });
+  const processingTexts = [
+    "Analyzing your exam pattern...",
+    "Ranking topics by marks impact...",
+    "Generating mastery guides...",
+    "Building your quiz bank...",
+    "Finalizing your AI plan..."
+  ];
 
   const addSubject = () => {
-    if (newSubject.trim() && !subjects.includes(newSubject.trim())) {
-      setSubjects([...subjects, newSubject.trim()]);
+    const subject = newSubject.trim();
+    if (subject && !subjects.includes(subject)) {
+      setSubjects((prev) => [...prev, subject]);
       setNewSubject("");
     }
   };
 
   const removeSubject = (subject: string) => {
-    setSubjects(subjects.filter(s => s !== subject));
+    setSubjects((prev) => prev.filter((s) => s !== subject));
   };
 
-  const handleSubmit = async () => {
-    if (!examName.trim() || !examDate || subjects.length === 0) {
-      toast.error("Please complete at least the exam context and subjects");
+  const nextStep = () => {
+    if (step === 1 && (!examName.trim() || !examDate)) {
+      toast.error("Please provide both exam name and date.");
       return;
     }
+    if (step === 2) {
+      if (newSubject.trim() && !subjects.includes(newSubject.trim())) {
+         setSubjects(prev => [...prev, newSubject.trim()]);
+         setNewSubject("");
+      } else if (subjects.length === 0) {
+        toast.error("Please add at least one subject.");
+        return;
+      }
+    }
+    setStep((prev) => Math.min(4, prev + 1));
+  };
 
-    if (!user) return;
+  const prevStep = () => setStep((prev) => Math.max(1, prev - 1));
 
-    setIsSubmitting(true);
+  const handleSubmit = async () => {
+    if (!user || !examDate || subjects.length === 0) return;
+    setIsProcessing(true);
+    setProcessingStage(0);
+
+    // Cycle through processing stages while the real AI call runs
+    let stageIndex = 0;
+    const stageTimer = setInterval(() => {
+      stageIndex = Math.min(stageIndex + 1, processingTexts.length - 1);
+      setProcessingStage(stageIndex);
+    }, 2500);
 
     try {
-      const { error } = await supabase.from("exam_contexts").insert({
+      // 1. Save exam context to Supabase
+      const { error: examError } = await supabase.from("exam_contexts").upsert(
+        {
+          user_id: user.id,
+          exam_name: examName.trim(),
+          exam_date: format(examDate, "yyyy-MM-dd"),
+          subjects,
+          daily_study_hours: dailyHours[0],
+          study_materials_description: studyMaterials.trim(),
+        },
+        { onConflict: "user_id" }
+      );
+      if (examError) throw examError;
+
+      // 2. Seed subject confidence at medium baseline
+      const confidenceRows = subjects.map((subject) => ({
         user_id: user.id,
-        exam_name: examName.trim(),
-        exam_date: format(examDate, "yyyy-MM-dd"),
-        subjects: subjects,
-        daily_study_hours: parseInt(dailyHours) || 4,
+        subject,
+        confidence_level: 6,
+      }));
+      await supabase.from("subject_confidence").upsert(confidenceRows, {
+        onConflict: "user_id,subject",
       });
 
-      if (error) throw error;
+      // 3. Call the AI edge function — generates ranked topics, mastery guides, and quizzes
+      const { data, error: fnError } = await supabase.functions.invoke("optimize-study-plan", {
+        body: {
+          user_id: user.id,
+          exam_name: examName.trim(),
+          exam_date: format(examDate, "yyyy-MM-dd"),
+          subjects,
+          study_materials_description: studyMaterials.trim(),
+          daily_study_hours: dailyHours[0],
+        },
+      });
 
+      if (fnError) throw new Error(fnError.message);
+      if (!data?.success) throw new Error(data?.error ?? "Plan generation failed.");
+
+      // 4. Save minimal state to localStorage (topics are loaded from DB on dashboard init)
+      const initialState: DashboardState = {
+        userId: user.id,
+        examName: examName.trim(),
+        examDate: format(examDate, "yyyy-MM-dd"),
+        subjects,
+        dailyStudyHours: dailyHours[0],
+        confidenceBySubject: subjects.reduce((acc, subject) => ({ ...acc, [subject]: "medium" }), {}),
+        uploads: [],
+        topics: [],
+        planner: [],
+        lastUpdated: new Date().toISOString(),
+      };
+
+      dashboardStorage.clearSetupResetRequest(user.id);
+      dashboardStorage.save(initialState);
+      refreshSetupStatus();
       await refreshExamContext();
-      toast.success("Setup complete! Let's start optimizing your study plan.");
     } catch (error: any) {
-      toast.error(error.message || "Failed to save setup");
+      toast.error(error.message || "Failed to generate plan. Please try again.");
+      setIsProcessing(false);
     } finally {
-      setIsSubmitting(false);
+      clearInterval(stageTimer);
     }
   };
 
-  const isExamValid = examName.trim() && examDate;
-  const isSubjectsValid = subjects.length > 0;
-  const canSubmit = isExamValid && isSubjectsValid;
+  if (isProcessing) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black text-white overflow-hidden">
+        {/* Background radial glow */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-[600px] h-[600px] rounded-full bg-primary/10 blur-3xl animate-pulse" />
+        </div>
+
+        <div className="relative flex flex-col items-center gap-10 max-w-lg text-center px-8">
+          {/* Spinner */}
+          <div className="relative w-24 h-24">
+            <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
+            <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-primary animate-spin" />
+            <div className="absolute inset-2 rounded-full border-4 border-transparent border-t-primary/50 animate-spin [animation-duration:1.5s] [animation-direction:reverse]" />
+          </div>
+
+          {/* Stage label */}
+          <div className="space-y-3">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-medium">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              AI is working
+            </div>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight leading-tight">
+              {processingTexts[processingStage]}
+            </h2>
+            <p className="text-white/40 text-lg">
+              Building your personalised high-yield plan for {examName}.
+            </p>
+          </div>
+
+          {/* Progress dots */}
+          <div className="flex gap-2">
+            {processingTexts.map((_, i) => (
+              <div
+                key={i}
+                className={cn(
+                  "h-1.5 rounded-full transition-all duration-700",
+                  i <= processingStage ? "w-6 bg-primary" : "w-2 bg-white/20"
+                )}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      {/* Welcome Header */}
-      <div className="text-center mb-12">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-soft text-primary text-sm font-medium mb-4">
-          <Sparkles className="w-4 h-4" />
-          Welcome to JUMBLE
+    <div className="min-h-screen bg-black text-white selection:bg-primary/30 flex flex-col">
+      <div className="flex-1 flex flex-col max-w-3xl w-full mx-auto px-6 py-12 md:py-24 justify-center">
+        
+        {/* Progress Dots */}
+        <div className="flex gap-2 mb-12 items-center">
+          {steps.map((s, i) => (
+            <div 
+              key={s} 
+              className={cn(
+                "h-1.5 rounded-full transition-all duration-500",
+                step === i + 1 ? "w-8 bg-primary" : step > i + 1 ? "w-4 bg-white/40" : "w-4 bg-white/10"
+              )} 
+            />
+          ))}
         </div>
-        <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-          Welcome, {userName}!
-        </h1>
-        <p className="text-muted-foreground max-w-lg mx-auto">
-          Let's set up your study profile so JUMBLE can create intelligent, personalized recommendations for you.
-        </p>
-      </div>
 
-      {/* Setup Cards */}
-      <div className="space-y-6">
-        {/* Step 1: Exam Context */}
-        <div className={cn(
-          "card-elevated p-6 border-2 transition-all",
-          isExamValid ? "border-primary/20" : "border-transparent"
-        )}>
-          <div className="flex items-start gap-4">
-            <div className={cn(
-              "w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0",
-              isExamValid ? "bg-primary/10" : "bg-secondary"
-            )}>
-              {isExamValid ? (
-                <CheckCircle className="w-6 h-6 text-primary" />
-              ) : (
-                <CalendarIcon className="w-6 h-6 text-muted-foreground" />
-              )}
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold text-foreground">Set Exam Context</h3>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-accent-soft text-accent font-medium">Required</span>
-              </div>
-              <p className="text-sm text-muted-foreground mb-4">
-                Tell us about your upcoming exam
-              </p>
-
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="examName">Exam Name</Label>
+        <div className="relative min-h-[400px]">
+          {/* Step 1: Exam Details */}
+          {step === 1 && (
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-8">
+              <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight">
+                What are you <br/> studying for?
+              </h1>
+              
+              <div className="space-y-6 max-w-xl">
+                <div>
                   <Input
-                    id="examName"
-                    placeholder="e.g., JEE Main, NEET, Board Exams"
+                    className="h-16 text-2xl bg-transparent border-0 border-b-2 border-white/20 rounded-none px-0 focus-visible:ring-0 focus-visible:border-primary placeholder:text-white/20"
+                    placeholder="e.g. JEE Main, USMLE, SAT..."
                     value={examName}
                     onChange={(e) => setExamName(e.target.value)}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Exam Date</Label>
+                
+                <div>
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !examDate && "text-muted-foreground"
+                          "w-full h-16 text-xl justify-start px-0 border-b-2 border-white/20 rounded-none hover:bg-transparent hover:text-white focus-visible:ring-0",
+                          !examDate && "text-white/40"
                         )}
                       >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {examDate ? format(examDate, "PPP") : "Pick a date"}
+                        <CalendarIcon className="mr-4 h-6 w-6 opacity-50" />
+                        {examDate ? format(examDate, "MMMM do, yyyy") : "When is the exam?"}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
+                    <PopoverContent className="w-auto p-0 bg-zinc-950 border-zinc-800 text-white" align="start">
                       <Calendar
                         mode="single"
                         selected={examDate}
                         onSelect={setExamDate}
                         disabled={(date) => date < new Date()}
                         initialFocus
-                        className="p-3 pointer-events-auto"
                       />
                     </PopoverContent>
                   </Popover>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+          )}
 
-        {/* Step 2: Subjects */}
-        <div className={cn(
-          "card-elevated p-6 border-2 transition-all",
-          isSubjectsValid ? "border-primary/20" : "border-transparent"
-        )}>
-          <div className="flex items-start gap-4">
-            <div className={cn(
-              "w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0",
-              isSubjectsValid ? "bg-primary/10" : "bg-secondary"
-            )}>
-              {isSubjectsValid ? (
-                <CheckCircle className="w-6 h-6 text-primary" />
-              ) : (
-                <BookOpen className="w-6 h-6 text-muted-foreground" />
-              )}
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold text-foreground">Confirm Subjects</h3>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-accent-soft text-accent font-medium">Required</span>
-              </div>
-              <p className="text-sm text-muted-foreground mb-4">
-                Add the subjects you need to prepare
-              </p>
-
-              <div className="flex gap-2 mb-4">
-                <Input
-                  placeholder="Add a subject (e.g., Physics)"
-                  value={newSubject}
-                  onChange={(e) => setNewSubject(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addSubject()}
-                />
-                <Button onClick={addSubject} size="icon" variant="secondary">
-                  <Plus className="w-4 h-4" />
-                </Button>
-              </div>
-
-              {subjects.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {subjects.map((subject) => (
-                    <div
-                      key={subject}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary-soft text-primary text-sm"
-                    >
-                      {subject}
-                      <button
-                        onClick={() => removeSubject(subject)}
-                        className="hover:bg-primary/20 rounded-full p-0.5"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Step 3: Study Availability (Optional) */}
-        <div className="card-elevated p-6">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center flex-shrink-0">
-              <Clock className="w-6 h-6 text-muted-foreground" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold text-foreground">Study Availability</h3>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium">Optional</span>
-              </div>
-              <p className="text-sm text-muted-foreground mb-4">
-                How many hours can you study daily?
-              </p>
-
-              <div className="max-w-xs">
-                <div className="flex items-center gap-3">
+          {/* Step 2: Subjects */}
+          {step === 2 && (
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-8">
+              <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight">
+                Which subjects <br/> are included?
+              </h1>
+              
+              <div className="space-y-8 max-w-xl">
+                <div className="relative">
                   <Input
-                    type="number"
-                    min="1"
-                    max="16"
-                    value={dailyHours}
-                    onChange={(e) => setDailyHours(e.target.value)}
-                    className="w-20"
+                    className="h-16 text-2xl bg-transparent border-0 border-b-2 border-white/20 rounded-none px-0 focus-visible:ring-0 focus-visible:border-primary placeholder:text-white/20 pr-12"
+                    placeholder="Type subject and press Enter"
+                    value={newSubject}
+                    onChange={(e) => setNewSubject(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addSubject()}
                   />
-                  <span className="text-muted-foreground">hours per day</span>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="absolute right-0 top-1/2 -translate-y-1/2 hover:bg-white/10"
+                    onClick={addSubject}
+                  >
+                    <Plus className="w-6 h-6" />
+                  </Button>
                 </div>
+
+                {subjects.length > 0 && (
+                  <div className="flex flex-wrap gap-3">
+                    {subjects.map((subject) => (
+                      <div
+                        key={subject}
+                        className="animate-in zoom-in inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-zinc-900 border border-white/10 text-lg"
+                      >
+                        {subject}
+                        <button
+                          onClick={() => removeSubject(subject)}
+                          className="hover:bg-white/10 rounded-full p-1 transition-colors"
+                        >
+                          <X className="w-4 h-4 text-white/50 hover:text-white" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        </div>
+          )}
 
-        {/* Step 4: Upload PYQs (Optional - Coming Soon) */}
-        <div className="card-elevated p-6 opacity-60">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center flex-shrink-0">
-              <Upload className="w-6 h-6 text-muted-foreground" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold text-foreground">Upload PYQs</h3>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium">Coming Soon</span>
+          {/* Step 3: Study Materials */}
+          {step === 3 && (
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-8">
+              <div className="space-y-2">
+                <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight">
+                  Your resources
+                </h1>
+                <p className="text-xl text-white/50">Optional: What books or notes are you using?</p>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Upload previous year question papers for enhanced analysis
-              </p>
+              
+              <div className="max-w-2xl">
+                <Textarea
+                  className="min-h-[160px] text-xl bg-zinc-900/50 border-white/10 rounded-2xl p-6 focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary placeholder:text-white/20 resize-none"
+                  placeholder="e.g., NCERT Physics textbook, Allen coaching modules, and my handwritten notes..."
+                  value={studyMaterials}
+                  onChange={(e) => setStudyMaterials(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Step 4: Daily Hours */}
+          {step === 4 && (
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-8">
+              <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight">
+                Availability
+              </h1>
+              <p className="text-xl text-white/50">How many hours can you dedicate daily?</p>
+              
+              <div className="max-w-xl py-12">
+                <div className="flex items-end gap-4 mb-8">
+                  <span className="text-7xl font-bold text-primary tabular-nums tracking-tighter">
+                    {dailyHours[0]}
+                  </span>
+                  <span className="text-2xl text-white/40 pb-2 font-medium">hours / day</span>
+                </div>
+                
+                <Slider
+                  value={dailyHours}
+                  onValueChange={setDailyHours}
+                  max={16}
+                  min={1}
+                  step={1}
+                  className="py-4"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Supportive copy */}
-        <div className="text-center py-4">
-          <p className="text-sm text-muted-foreground italic">
-            You can update these settings anytime — JUMBLE adapts as you go.
-          </p>
-        </div>
-
-        {/* Submit Button */}
-        <div className="flex justify-center pt-4">
-          <Button
-            onClick={handleSubmit}
-            disabled={!canSubmit || isSubmitting}
-            size="lg"
-            className="px-8"
+        {/* Navigation */}
+        <div className="flex items-center gap-4 pt-12 mt-auto border-t border-white/10">
+          {step > 1 && (
+            <Button 
+              variant="ghost" 
+              onClick={prevStep}
+              className="text-lg px-8 h-14 rounded-full hover:bg-white/5"
+            >
+              Back
+            </Button>
+          )}
+          
+          <Button 
+            onClick={step === 4 ? handleSubmit : nextStep}
+            className={cn(
+              "text-lg px-8 h-14 rounded-full font-medium ml-auto transition-all",
+              step === 4 ? "bg-primary hover:bg-primary/90 text-primary-foreground px-12" : "bg-white text-black hover:bg-white/90"
+            )}
           >
-            {isSubmitting ? "Setting up..." : "Start My Study Plan"}
-            <ArrowRight className="w-5 h-5" />
+            {step === 4 ? "Generate My Plan" : "Continue"}
+            {step < 4 && <ArrowRight className="ml-2 w-5 h-5" />}
+            {step === 4 && <Sparkles className="ml-2 w-5 h-5" />}
           </Button>
         </div>
+
       </div>
     </div>
   );

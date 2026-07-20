@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Footer } from "@/components/Footer";
@@ -11,16 +12,15 @@ import {
 } from "lucide-react";
 
 const LandingPage = () => {
+  const howItWorksRef = useRef<HTMLDivElement>(null);
+
   const scrollToHowItWorks = () => {
-    const element = document.getElementById("how-it-works");
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" });
-    }
+    howItWorksRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   return (
     <div className="min-h-screen bg-background">
-      <PublicNavbar />
+      <PublicNavbar onHowItWorksClick={scrollToHowItWorks} />
 
       {/* ================= HERO SECTION ================= */}
       <section className="relative pt-48 pb-20 px-4 overflow-hidden">
@@ -101,7 +101,9 @@ const LandingPage = () => {
       </section>
 
       {/* ================= HOW IT WORKS ================= */}
-      <HowItWorksSection />
+      <div ref={howItWorksRef}>
+        <HowItWorksSection />
+      </div>
 
       {/* ================= CTA SECTION ================= */}
       <section className="py-20 px-4">
