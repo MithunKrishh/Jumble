@@ -1,197 +1,117 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-
 @layer base {
   :root {
-    /* JUMBLE Design System - Calm, Intelligent, Reassuring */
+    /* Ultra-Clean Modern Light Theme Palette */
+    --background: 210 40% 98%; /* #F8FAFC */
+    --foreground: 222 47% 11%; /* #0F172A */
     
-    /* Background palette - warm, not stark */
-    --background: 40 33% 98%;
-    --foreground: 220 25% 15%;
-    
-    /* Card surfaces */
-    --card: 0 0% 100%;
-    --card-foreground: 220 25% 15%;
+    /* Card Surfaces */
+    --card: 0 0% 100%; /* #FFFFFF */
+    --card-foreground: 222 47% 11%;
     
     /* Popover */
     --popover: 0 0% 100%;
-    --popover-foreground: 220 25% 15%;
+    --popover-foreground: 222 47% 11%;
     
-    /* Primary - Calm teal/sage */
-    --primary: 168 45% 42%;
+    /* Primary - Vibrant Indigo */
+    --primary: 238 84% 59%; /* #4F46E5 */
     --primary-foreground: 0 0% 100%;
-    --primary-soft: 168 35% 92%;
-    --primary-glow: 168 50% 55%;
+    --primary-soft: 239 84% 96%; /* #EEF2FF */
+    --primary-glow: 238 84% 67%;
     
-    /* Secondary - Warm neutral */
-    --secondary: 35 25% 94%;
-    --secondary-foreground: 220 25% 25%;
+    /* Secondary - Light Sky Slate */
+    --secondary: 214 32% 95%; /* #F1F5F9 */
+    --secondary-foreground: 222 47% 15%;
     
     /* Muted */
-    --muted: 35 15% 93%;
-    --muted-foreground: 220 15% 50%;
+    --muted: 214 32% 95%;
+    --muted-foreground: 215 16% 47%; /* #64748B */
     
-    /* Accent - Soft coral for highlights */
-    --accent: 15 75% 65%;
+    /* Accent - Vibrant Teal */
+    --accent: 173 80% 40%; /* #0D9488 */
     --accent-foreground: 0 0% 100%;
-    --accent-soft: 15 60% 95%;
+    --accent-soft: 172 66% 95%; /* #CCFBF1 */
     
-    /* Risk levels - informative, not alarming */
-    --risk-low: 145 50% 45%;
-    --risk-low-soft: 145 40% 92%;
-    --risk-medium: 38 85% 55%;
-    --risk-medium-soft: 38 70% 92%;
-    --risk-high: 12 70% 55%;
-    --risk-high-soft: 12 60% 93%;
+    /* Indicators */
+    --risk-low: 142 71% 45%; /* Emerald */
+    --risk-low-soft: 142 76% 95%;
+    --risk-medium: 38 92% 50%; /* Amber */
+    --risk-medium-soft: 48 100% 96%;
+    --risk-high: 0 84% 60%; /* Rose */
+    --risk-high-soft: 355 100% 96%;
     
     /* Effort vs Marks colors */
-    --effort-low: 145 50% 45%;
-    --effort-medium: 200 60% 50%;
-    --effort-high: 280 45% 55%;
+    --effort-low: 142 71% 45%;
+    --effort-medium: 217 91% 60%;
+    --effort-high: 262 83% 58%;
     
     /* Destructive */
-    --destructive: 0 65% 55%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
     
     /* Border and inputs */
-    --border: 35 20% 88%;
-    --input: 35 20% 88%;
-    --ring: 168 45% 42%;
+    --border: 214 32% 91%; /* #E2E8F0 */
+    --input: 214 32% 91%;
+    --ring: 238 84% 59%;
     
     --radius: 1rem;
     
-    /* Shadows */
-    --shadow-soft: 0 2px 8px -2px hsl(220 25% 15% / 0.06), 0 4px 16px -4px hsl(220 25% 15% / 0.08);
-    --shadow-card: 0 1px 3px hsl(220 25% 15% / 0.04), 0 4px 12px -2px hsl(220 25% 15% / 0.06);
-    --shadow-elevated: 0 8px 30px -8px hsl(220 25% 15% / 0.12);
-    
-    /* Sidebar */
-    --sidebar-background: 40 25% 97%;
-    --sidebar-foreground: 220 25% 25%;
-    --sidebar-primary: 168 45% 42%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 35 25% 94%;
-    --sidebar-accent-foreground: 220 25% 25%;
-    --sidebar-border: 35 20% 90%;
-    --sidebar-ring: 168 45% 42%;
+    /* Light Theme Elevation & Shadows */
+    --shadow-soft: 0 2px 8px -2px rgba(15, 23, 42, 0.04), 0 4px 16px -4px rgba(15, 23, 42, 0.06);
+    --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.03), 0 6px 18px -4px rgba(15, 23, 42, 0.05);
+    --shadow-elevated: 0 12px 32px -8px rgba(79, 70, 229, 0.12), 0 4px 12px -2px rgba(15, 23, 42, 0.04);
   }
 
-  .dark {
-    --background: 220 25% 8%;
-    --foreground: 35 20% 95%;
-    
-    --card: 220 20% 12%;
-    --card-foreground: 35 20% 95%;
-    
-    --popover: 220 20% 12%;
-    --popover-foreground: 35 20% 95%;
-    
-    --primary: 168 45% 50%;
-    --primary-foreground: 220 25% 8%;
-    --primary-soft: 168 30% 18%;
-    
-    --secondary: 220 15% 18%;
-    --secondary-foreground: 35 20% 90%;
-    
-    --muted: 220 15% 18%;
-    --muted-foreground: 35 15% 60%;
-    
-    --accent: 15 65% 55%;
-    --accent-foreground: 0 0% 100%;
-    --accent-soft: 15 40% 18%;
-    
-    --border: 220 15% 20%;
-    --input: 220 15% 20%;
-    --ring: 168 45% 50%;
-    
-    --sidebar-background: 220 20% 10%;
-    --sidebar-foreground: 35 20% 90%;
-    --sidebar-primary: 168 45% 50%;
-    --sidebar-primary-foreground: 220 25% 8%;
-    --sidebar-accent: 220 15% 16%;
-    --sidebar-accent-foreground: 35 20% 90%;
-    --sidebar-border: 220 15% 18%;
-    --sidebar-ring: 168 45% 50%;
-  }
-}
-
-@layer base {
-  * {
-    @apply border-border;
-  }
-  
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  
-  h1, h2, h3, h4, h5, h6 {
-    @apply font-semibold tracking-tight;
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
   }
 }
 
 @layer components {
-  /* Card variants */
+  /* Ultra-Clean Card Styles */
   .card-elevated {
-    @apply bg-card rounded-2xl;
-    box-shadow: var(--shadow-card);
+    @apply bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm transition-all duration-300;
   }
   
   .card-interactive {
-    @apply bg-card rounded-2xl transition-all duration-300;
-    box-shadow: var(--shadow-card);
+    @apply bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm hover:shadow-xl hover:shadow-indigo-500/10 hover:border-indigo-300 hover:-translate-y-0.5 transition-all duration-300;
   }
   
-  .card-interactive:hover {
-    box-shadow: var(--shadow-elevated);
-    transform: translateY(-2px);
-  }
-  
-  /* Why badge for explanations */
-  .why-badge {
-    @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-accent-soft text-accent cursor-help;
-  }
-  
-  /* Risk indicator styles */
-  .risk-low {
-    @apply bg-risk-low-soft text-risk-low;
-  }
-  
-  .risk-medium {
-    @apply bg-risk-medium-soft text-risk-medium;
-  }
-  
-  .risk-high {
-    @apply bg-risk-high-soft text-risk-high;
-  }
-  
-  /* Priority badge */
+  /* Badges */
   .priority-badge {
-    @apply inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold;
+    @apply inline-flex items-center justify-center w-8 h-8 rounded-2xl text-xs font-bold font-display;
   }
-  
-  /* Smooth scroll */
-  html {
-    scroll-behavior: smooth;
+
+  /* Glassmorphism Light */
+  .glass-card-light {
+    @apply bg-white/80 backdrop-blur-xl border border-slate-200/80 shadow-sm;
   }
 }
 
-@layer utilities {
-  /* Gradient text */
-  .gradient-text {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary-glow;
-  }
-  
-  /* Subtle pattern background */
-  .pattern-dots {
-    background-image: radial-gradient(hsl(var(--border)) 1px, transparent 1px);
-    background-size: 24px 24px;
-  }
-  
-  /* Glass effect */
-  .glass {
-    @apply bg-card/80 backdrop-blur-lg;
-  }
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
 }

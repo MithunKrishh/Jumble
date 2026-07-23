@@ -147,7 +147,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setExamContext(null);
   };
 
-  const hasCompletedSetup = !!examContext && !!user;
+  const isResetRequested = user ? dashboardStorage.isSetupResetRequested(user.id) : false;
+  const hasCompletedSetup = !!examContext && !!user && !isResetRequested;
 
   // This reference ensures context consumers re-evaluate setup state after local reset toggles.
   void setupStatusVersion;
