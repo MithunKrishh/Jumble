@@ -28,7 +28,6 @@ import { cn } from "@/lib/utils";
 import { dashboardStorage } from "@/services/dashboardStorage";
 import { DashboardState, ConfidenceLevel, UploadedMaterial } from "@/types/dashboard";
 import { uploadService } from "@/services/uploadService";
-import { generateFallbackStudyPlan } from "@/services/planGenerator";
 
 interface OnboardingDashboardProps {
   userName: string;
@@ -197,38 +196,28 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
       });
 
       // 3. Invoke Edge Function for AI plan generation with Authorization header
-      let planGenerated = false;
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const headers: Record<string, string> = {};
-        if (session?.access_token) {
-          headers["Authorization"] = `Bearer ${session.access_token}`;
-        }
-
-        const { data, error: fnError } = await supabase.functions.invoke("optimize-study-plan", {
-          headers,
-          body: {
-            user_id: user.id,
-            exam_name: examName.trim(),
-            exam_date: format(examDate, "yyyy-MM-dd"),
-            subjects,
-            study_materials_description: combinedMaterials,
-            daily_study_hours: dailyHours[0],
-          },
-        });
-
-        if (!fnError && data?.success) {
-          planGenerated = true;
-        } else {
-          console.warn("Edge function invocation returned non-success, using client plan fallback:", fnError?.message || data?.error);
-        }
-      } catch (err) {
-        console.warn("Edge function network error, using client plan fallback:", err);
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) {
+        headers["Authorization"] = `Bearer ${session.access_token}`;
       }
 
-      // If Edge Function failed or was unreachable, run reliable client-side plan generator
-      if (!planGenerated) {
-        await generateFallbackStudyPlan(user.id, subjects, examName.trim());
+      const { data, error: fnError } = await supabase.functions.invoke("optimize-study-plan", {
+        headers,
+        body: {
+          user_id: user.id,
+          exam_name: examName.trim(),
+          exam_date: format(examDate, "yyyy-MM-dd"),
+          subjects,
+          study_materials_description: combinedMaterials,
+          daily_study_hours: dailyHours[0],
+        },
+      });
+
+      if (fnError || !data?.success) {
+        const reason = fnError?.message || data?.error || "Unknown error from AI plan generator";
+        console.error("[optimize-study-plan] Edge function failed:", reason);
+        throw new Error(`AI plan generation failed: ${reason}`);
       }
 
       // 4. Save local state
