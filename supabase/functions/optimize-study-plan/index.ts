@@ -1,5 +1,5 @@
 // Supabase Edge Function: optimize-study-plan
-// Calls OpenAI GPT-4o-mini to generate a high-yield study plan,
+// Calls OpenRouter to generate a high-yield study plan,
 // then saves all topics (with Mastery Guides + MCQ quizzes) to the topics table.
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
@@ -35,7 +35,7 @@ interface TopicFromLLM {
 }
 
 // ---------------------------------------------------------------------------
-// Build the OpenAI prompt
+// Build the OpenRouter prompt
 // ---------------------------------------------------------------------------
 function buildPrompt(
   examName: string,
@@ -118,16 +118,17 @@ serve(async (req: Request) => {
       );
     }
 
-    const openaiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!openaiKey) {
+    const openrouterKey = Deno.env.get("OPENROUTER_API_KEY");
+    if (!openrouterKey) {
+      console.error("[optimize-study-plan] OPENROUTER_API_KEY secret is not configured.");
       return new Response(
-        JSON.stringify({ error: "OPENAI_API_KEY secret is not configured on this Supabase project." }),
+        JSON.stringify({ error: "OPENROUTER_API_KEY secret is not configured on this Supabase project." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // ---------------------------------------------------------------------------
-    // Call OpenAI GPT-4o-mini with JSON mode
+    // Call OpenRouter with a free model
     // ---------------------------------------------------------------------------
     const prompt = buildPrompt(
       exam_name,
@@ -137,14 +138,16 @@ serve(async (req: Request) => {
       daily_study_hours ?? 4
     );
 
-    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+    const openrouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${openaiKey}`,
+        Authorization: `Bearer ${openrouterKey}`,
         "Content-Type": "application/json",
+        "HTTP-Referer": Deno.env.get("SUPABASE_URL") ?? "",
+        "X-Title": "JUMBLE",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "google/gemma-4-26b-a4b-it:free",
         messages: [
           {
             role: "system",
@@ -155,20 +158,28 @@ serve(async (req: Request) => {
         ],
         temperature: 0.6,
         max_tokens: 16000,
-        response_format: { type: "json_object" },
       }),
     });
 
-    if (!openaiRes.ok) {
-      const errText = await openaiRes.text();
-      throw new Error(`OpenAI API error (${openaiRes.status}): ${errText}`);
+    if (!openrouterRes.ok) {
+      const errText = await openrouterRes.text();
+      const errMsg = `OpenRouter API error (${openrouterRes.status}): ${errText}`;
+      console.error("[optimize-study-plan] OpenRouter API error:", errMsg);
+      throw new Error(errMsg);
     }
 
-    const openaiData = await openaiRes.json();
-    const rawContent: string | undefined = openaiData.choices?.[0]?.message?.content;
+    const openrouterData = await openrouterRes.json();
+    console.log("[optimize-study-plan] OpenRouter response structure:", JSON.stringify({
+      choices: openrouterData.choices,
+      usage: openrouterData.usage,
+      model: openrouterData.model,
+    }));
+    const rawContent: string | undefined = openrouterData.choices?.[0]?.message?.content;
 
     if (!rawContent) {
-      throw new Error("OpenAI returned an empty response.");
+      const emptyMsg = `OpenRouter returned an empty response. Full response: ${JSON.stringify(openrouterData).slice(0, 500)}`;
+      console.error("[optimize-study-plan]", emptyMsg);
+      throw new Error(emptyMsg);
     }
 
     // ---------------------------------------------------------------------------
