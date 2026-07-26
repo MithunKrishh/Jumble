@@ -138,28 +138,44 @@ serve(async (req: Request) => {
       daily_study_hours ?? 4
     );
 
-    const openrouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openrouterKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": Deno.env.get("SUPABASE_URL") ?? "",
-        "X-Title": "JUMBLE",
-      },
-      body: JSON.stringify({
-        model: "google/gemma-4-26b-a4b-it:free",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert exam preparation strategist. Respond only with valid JSON. No markdown fences, no explanation outside the JSON object.",
-          },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.6,
-        max_tokens: 16000,
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutMs = 60_000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    let openrouterRes: Response;
+    try {
+      openrouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${openrouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": Deno.env.get("SUPABASE_URL") ?? "",
+          "X-Title": "JUMBLE",
+        },
+        body: JSON.stringify({
+          model: "inclusionai/ling-3.0-flash:free",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are an expert exam preparation strategist. Respond only with valid JSON. No markdown fences, no explanation outside the JSON object.",
+            },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.6,
+          max_tokens: 8000,
+        }),
+      });
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      const msg = err instanceof Error ? err.message : "Unknown error occurred";
+      const errMsg = `OpenRouter request failed or timed out after ${timeoutMs}ms: ${msg}`;
+      console.error("[optimize-study-plan]", errMsg);
+      throw new Error(errMsg);
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!openrouterRes.ok) {
       const errText = await openrouterRes.text();
@@ -169,15 +185,26 @@ serve(async (req: Request) => {
     }
 
     const openrouterData = await openrouterRes.json();
-    console.log("[optimize-study-plan] OpenRouter response structure:", JSON.stringify({
-      choices: openrouterData.choices,
-      usage: openrouterData.usage,
-      model: openrouterData.model,
-    }));
-    const rawContent: string | undefined = openrouterData.choices?.[0]?.message?.content;
+    console.log(
+      "[optimize-study-plan] OpenRouter response structure:",
+      JSON.stringify({
+        choices: openrouterData.choices,
+        usage: openrouterData.usage,
+        model: openrouterData.model,
+      })
+    );
+
+    const message = openrouterData.choices?.[0]?.message;
+    let rawContent =
+      message?.content ??
+      message?.reasoning_content ??
+      (typeof message?.content === "string" ? message.content : undefined);
 
     if (!rawContent) {
-      const emptyMsg = `OpenRouter returned an empty response. Full response: ${JSON.stringify(openrouterData).slice(0, 500)}`;
+      const emptyMsg = `OpenRouter returned an empty response. Full response: ${JSON.stringify(openrouterData).slice(
+        0,
+        800
+      )}`;
       console.error("[optimize-study-plan]", emptyMsg);
       throw new Error(emptyMsg);
     }

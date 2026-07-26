@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "./ui/button";
-import { Menu, X, Sparkles, ArrowRight } from "lucide-react";
+import { Menu, X, Sparkles, ArrowRight, Moon, Sun } from "lucide-react";
+import { useTheme } from "next-themes";
 
 interface PublicNavbarProps {
   onHowItWorksClick?: () => void;
@@ -9,6 +10,19 @@ interface PublicNavbarProps {
 
 export const PublicNavbar = ({ onHowItWorksClick }: PublicNavbarProps) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+  const [dark, setDark] = useState(false);
+
+  useEffect(() => {
+    const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    setDark(isDark);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    const next = dark ? "light" : "dark";
+    setTheme(next);
+    setDark(next === "dark");
+  };
 
   const handleHowItWorks = () => {
     if (onHowItWorksClick) {
@@ -18,7 +32,7 @@ export const PublicNavbar = ({ onHowItWorksClick }: PublicNavbarProps) => {
   };
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 shadow-xs">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800/80 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-18">
           {/* Logo */}
@@ -36,9 +50,15 @@ export const PublicNavbar = ({ onHowItWorksClick }: PublicNavbarProps) => {
           <div className="hidden md:flex items-center gap-6">
             <button 
               onClick={handleHowItWorks}
-              className="text-sm font-semibold text-slate-600 hover:text-indigo-600 transition-colors"
+              className="text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
             >
               How It Works
+            </button>
+            <button
+              onClick={toggleTheme}
+              className="text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+            >
+              {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
             <Link to="/login">
               <Button variant="ghost" size="sm" className="text-slate-700 hover:text-indigo-600 hover:bg-slate-100 font-semibold rounded-xl">
@@ -64,16 +84,16 @@ export const PublicNavbar = ({ onHowItWorksClick }: PublicNavbarProps) => {
 
       {/* Mobile menu */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-t border-slate-200 bg-white/95 backdrop-blur-xl px-4 py-4 space-y-3 shadow-xl">
+        <div className="md:hidden border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl px-4 py-4 space-y-3 shadow-xl">
           <button
             onClick={handleHowItWorks}
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-100 w-full text-left"
+            className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 w-full text-left"
           >
             How It Works
           </button>
           <div className="grid grid-cols-2 gap-2 pt-2">
             <Link to="/login" onClick={() => setMobileMenuOpen(false)}>
-              <Button variant="outline" size="sm" className="w-full font-bold border-slate-200 text-slate-700 rounded-xl">
+              <Button variant="outline" size="sm" className="w-full font-bold border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl">
                 Sign In
               </Button>
             </Link>
@@ -83,6 +103,13 @@ export const PublicNavbar = ({ onHowItWorksClick }: PublicNavbarProps) => {
               </Button>
             </Link>
           </div>
+          <button
+            onClick={toggleTheme}
+            className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 w-full text-left"
+          >
+            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            {dark ? "Light mode" : "Dark mode"}
+          </button>
         </div>
       )}
     </nav>
