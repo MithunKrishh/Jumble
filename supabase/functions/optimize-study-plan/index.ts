@@ -175,7 +175,7 @@ serve(async (req: Request) => {
               { role: "user", content: prompt },
             ],
             temperature: 0.6,
-            max_tokens: 8000,
+            max_tokens: 16000,
           }),
         });
 
@@ -229,13 +229,30 @@ serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------------------
-    // Parse and validate LLM output
+    // Parse and validate LLM output (with truncation recovery)
     // ---------------------------------------------------------------------------
     let parsed: { topics: TopicFromLLM[] };
+    const parseAttempt = rawContent;
+
+    // Attempt 1: direct parse
     try {
-      parsed = JSON.parse(rawContent);
+      parsed = JSON.parse(parseAttempt);
     } catch {
-      throw new Error("LLM response was not valid JSON. Raw: " + rawContent.slice(0, 300));
+      // Attempt 2: try to recover truncated JSON by finding the last complete topic object
+      console.warn("[optimize-study-plan] Direct JSON parse failed, attempting truncation recovery...");
+      try {
+        // Find the last complete "}" that closes a topic object, then close the array and object
+        const lastBrace = parseAttempt.lastIndexOf("}");
+        if (lastBrace > 0) {
+          const truncated = parseAttempt.substring(0, lastBrace + 1) + "]}";
+          parsed = JSON.parse(truncated);
+          console.log("[optimize-study-plan] Truncation recovery succeeded with", parsed.topics?.length, "topics");
+        } else {
+          throw new Error("No closing brace found for recovery");
+        }
+      } catch {
+        throw new Error("LLM response was not valid JSON. Raw: " + rawContent.slice(0, 300));
+      }
     }
 
     const topics: TopicFromLLM[] = parsed.topics;
