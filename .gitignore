@@ -23,5 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
+# Environment variables (contains API keys)
+.env
+.env.local
+.env.production
+
 # Broken submodule
 src/Jumble---Unjumble-your-Chaos
