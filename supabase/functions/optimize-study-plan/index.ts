@@ -128,7 +128,7 @@ serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------------------
-    // Call OpenRouter with a free model
+    // Call OpenRouter (try up to 3 models as fallback)
     // ---------------------------------------------------------------------------
     const prompt = buildPrompt(
       exam_name,
@@ -138,64 +138,83 @@ serve(async (req: Request) => {
       daily_study_hours ?? 4
     );
 
-    const controller = new AbortController();
-    const timeoutMs = 60_000;
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const MODELS_TO_TRY = [
+      "inclusionai/ling-3.0-flash:free",
+      "cognitivecomputations/dolphin3.0-mistral-24b:free",
+      "microsoft/phi-3-medium-128k-instruct:free",
+    ];
 
-    let openrouterRes: Response;
-    try {
-      openrouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${openrouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": Deno.env.get("SUPABASE_URL") ?? "",
-          "X-Title": "JUMBLE",
-        },
-        body: JSON.stringify({
-          model: "inclusionai/ling-3.0-flash:free",
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are an expert exam preparation strategist. Respond only with valid JSON. No markdown fences, no explanation outside the JSON object.",
-            },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.6,
-          max_tokens: 8000,
-        }),
-      });
-    } catch (err: unknown) {
-      clearTimeout(timeoutId);
-      const msg = err instanceof Error ? err.message : "Unknown error occurred";
-      const errMsg = `OpenRouter request failed or timed out after ${timeoutMs}ms: ${msg}`;
-      console.error("[optimize-study-plan]", errMsg);
-      throw new Error(errMsg);
-    } finally {
-      clearTimeout(timeoutId);
+    let openrouterData: any = null;
+    let lastModelError = "";
+
+    for (const model of MODELS_TO_TRY) {
+      const controller = new AbortController();
+      const timeoutMs = 60_000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        console.log(`[optimize-study-plan] Trying model: ${model}`);
+
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${openrouterKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": Deno.env.get("SUPABASE_URL") ?? "",
+            "X-Title": "JUMBLE",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are an expert exam preparation strategist. Respond only with valid JSON. No markdown fences, no explanation outside the JSON object.",
+              },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0.6,
+            max_tokens: 8000,
+          }),
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errText = await res.text();
+          lastModelError = `OpenRouter API error (${res.status}) for model ${model}: ${errText.slice(0, 300)}`;
+          console.warn(`[optimize-study-plan] Model ${model} failed:`, lastModelError);
+          continue;
+        }
+
+        openrouterData = await res.json();
+        console.log(
+          `[optimize-study-plan] Model ${model} succeeded. Response:`,
+          JSON.stringify({
+            choices: openrouterData.choices,
+            usage: openrouterData.usage,
+            model: openrouterData.model,
+          })
+        );
+        break;
+      } catch (err: unknown) {
+        clearTimeout(timeoutId);
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        lastModelError = `Model ${model} failed or timed out: ${msg}`;
+        console.warn(`[optimize-study-plan]`, lastModelError);
+        continue;
+      } finally {
+        clearTimeout(timeoutId);
+      }
     }
 
-    if (!openrouterRes.ok) {
-      const errText = await openrouterRes.text();
-      const errMsg = `OpenRouter API error (${openrouterRes.status}): ${errText}`;
-      console.error("[optimize-study-plan] OpenRouter API error:", errMsg);
-      throw new Error(errMsg);
+    if (!openrouterData) {
+      throw new Error(`All OpenRouter models failed. Last error: ${lastModelError}`);
     }
-
-    const openrouterData = await openrouterRes.json();
-    console.log(
-      "[optimize-study-plan] OpenRouter response structure:",
-      JSON.stringify({
-        choices: openrouterData.choices,
-        usage: openrouterData.usage,
-        model: openrouterData.model,
-      })
-    );
 
     const message = openrouterData.choices?.[0]?.message;
-    let rawContent =
+    const rawContent =
       message?.content ??
       message?.reasoning_content ??
       (typeof message?.content === "string" ? message.content : undefined);
