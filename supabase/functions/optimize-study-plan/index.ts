@@ -121,9 +121,9 @@ serve(async (req: Request) => {
     );
 
     const MODELS_TO_TRY = [
-      "inclusionai/ling-3.0-flash:free",
-      "cognitivecomputations/dolphin3.0-mistral-24b:free",
-      "microsoft/phi-3-medium-128k-instruct:free",
+      "google/gemini-2.0-flash-exp:free",
+      "qwen/qwen2.5-coder-32b-instruct:free",
+      "mistralai/mistral-7b-instruct:free",
     ];
 
     let openrouterData: any = null;
