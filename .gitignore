@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Broken submodule
+src/Jumble---Unjumble-your-Chaos
