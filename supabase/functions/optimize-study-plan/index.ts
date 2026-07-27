@@ -1,5 +1,5 @@
 // Supabase Edge Function: optimize-study-plan
-// Calls OpenRouter to generate a high-yield study plan,
+// Calls Google Gemini to generate a high-yield study plan,
 // then saves all topics (with Mastery Guides + MCQ quizzes) to the topics table.
 
 // NOTE: "Deno" shows red underline in VS Code but works fine at runtime.
@@ -40,7 +40,7 @@ interface TopicFromLLM {
 }
 
 // ---------------------------------------------------------------------------
-// Build the OpenRouter prompt
+// Build the Gemini prompt
 // ---------------------------------------------------------------------------
 function buildPrompt(
   examName: string,
@@ -73,6 +73,62 @@ Respond ONLY with valid JSON. No markdown fences. No extra text.
 }
 
 // ---------------------------------------------------------------------------
+// Generic JSON recovery for truncated LLM output
+// ---------------------------------------------------------------------------
+function recoverJson(text: string): { topics: TopicFromLLM[] } | null {
+  const firstBrace = text.indexOf("{");
+  if (firstBrace === -1) return null;
+
+  let depth = 0;
+  let lastCompleteObjectEnd = -1;
+
+  for (let i = firstBrace; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        lastCompleteObjectEnd = i;
+      }
+    }
+  }
+
+  if (depth > 0 && lastCompleteObjectEnd > firstBrace) {
+    const partialJson = text.substring(firstBrace, lastCompleteObjectEnd + 1) + "]}";
+    try {
+      return JSON.parse(partialJson);
+    } catch {
+      // fall through
+    }
+  }
+
+  // Last resort: extract topic names via regex
+  try {
+    const nameMatches = [...text.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
+    if (nameMatches.length > 0) {
+      return { topics: nameMatches.map((m, i) => ({
+        name: m[1],
+        subject: "",
+        priority_order: i + 1,
+        marks_impact: 5,
+        importance: 5,
+        effort: "medium" as const,
+        pyq_frequency: 5,
+        proficiency: 30,
+        explanation: "",
+        study_content: "",
+        quiz_data: [],
+      }))};
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 serve(async (req: Request) => {
@@ -100,19 +156,19 @@ serve(async (req: Request) => {
       );
     }
 
-    const openrouterKey = Deno.env.get("OPENROUTER_API_KEY");
-    if (!openrouterKey) {
-      console.error("[optimize-study-plan] OPENROUTER_API_KEY secret is not configured.");
+    const geminiKey = Deno.env.get("GEMINI_API_KEY");
+    if (!geminiKey) {
+      console.error("[optimize-study-plan] GEMINI_API_KEY secret is not configured.");
       return new Response(
-        JSON.stringify({ error: "OPENROUTER_API_KEY secret is not configured on this Supabase project." }),
+        JSON.stringify({ error: "GEMINI_API_KEY secret is not configured on this Supabase project." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // ---------------------------------------------------------------------------
-    // Call OpenRouter (try up to 3 models as fallback)
+    // Build prompt
     // ---------------------------------------------------------------------------
-    const prompt = buildPrompt(
+    const userPrompt = buildPrompt(
       exam_name,
       exam_date,
       subjects,
@@ -120,16 +176,20 @@ serve(async (req: Request) => {
       daily_study_hours ?? 4
     );
 
+    // ---------------------------------------------------------------------------
+    // Call Gemini API (with fallback models)
+    // ---------------------------------------------------------------------------
     const MODELS_TO_TRY = [
-      "google/gemini-2.0-flash-exp:free",
-      "qwen/qwen2.5-coder-32b-instruct:free",
-      "mistralai/mistral-7b-instruct:free",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash",
     ];
 
-    let openrouterData: any = null;
+    let geminiData: any = null;
     let lastModelError = "";
 
     for (const model of MODELS_TO_TRY) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+
       const controller = new AbortController();
       const timeoutMs = 60_000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -137,27 +197,26 @@ serve(async (req: Request) => {
       try {
         console.log(`[optimize-study-plan] Trying model: ${model}`);
 
-        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const res = await fetch(url, {
           method: "POST",
           signal: controller.signal,
           headers: {
-            Authorization: `Bearer ${openrouterKey}`,
             "Content-Type": "application/json",
-            "HTTP-Referer": Deno.env.get("SUPABASE_URL") ?? "",
-            "X-Title": "JUMBLE",
           },
           body: JSON.stringify({
-            model,
-            messages: [
+            system_instruction: {
+              parts: [{ text: "You are an expert exam preparation strategist. Respond only with valid JSON. No markdown fences, no explanation outside the JSON object." }],
+            },
+            contents: [
               {
-                role: "system",
-                content:
-                  "You are an expert exam preparation strategist. Respond only with valid JSON. No markdown fences, no explanation outside the JSON object.",
+                role: "user",
+                parts: [{ text: userPrompt }],
               },
-              { role: "user", content: prompt },
             ],
-            temperature: 0.6,
-            max_tokens: 16000,
+            generationConfig: {
+              temperature: 0.6,
+              maxOutputTokens: 16000,
+            },
           }),
         });
 
@@ -165,18 +224,18 @@ serve(async (req: Request) => {
 
         if (!res.ok) {
           const errText = await res.text();
-          lastModelError = `OpenRouter API error (${res.status}) for model ${model}: ${errText.slice(0, 300)}`;
+          lastModelError = `Gemini API error (${res.status}) for model ${model}: ${errText.slice(0, 300)}`;
           console.warn(`[optimize-study-plan] Model ${model} failed:`, lastModelError);
           continue;
         }
 
-        openrouterData = await res.json();
+        geminiData = await res.json();
         console.log(
           `[optimize-study-plan] Model ${model} succeeded. Response:`,
           JSON.stringify({
-            choices: openrouterData.choices,
-            usage: openrouterData.usage,
-            model: openrouterData.model,
+            candidates: geminiData.candidates?.length,
+            usage: geminiData.usageMetadata,
+            model: model,
           })
         );
         break;
@@ -191,21 +250,16 @@ serve(async (req: Request) => {
       }
     }
 
-    if (!openrouterData) {
-      throw new Error(`All OpenRouter models failed. Last error: ${lastModelError}`);
+    if (!geminiData) {
+      throw new Error(`All Gemini models failed. Last error: ${lastModelError}`);
     }
 
-    const message = openrouterData.choices?.[0]?.message;
-    const rawContent =
-      message?.content ??
-      message?.reasoning_content ??
-      (typeof message?.content === "string" ? message.content : undefined);
+    // Extract text from Gemini response
+    const candidate = geminiData.candidates?.[0];
+    const rawContent = candidate?.content?.parts?.[0]?.text;
 
     if (!rawContent) {
-      const emptyMsg = `OpenRouter returned an empty response. Full response: ${JSON.stringify(openrouterData).slice(
-        0,
-        800
-      )}`;
+      const emptyMsg = `Gemini returned an empty response. Full response: ${JSON.stringify(geminiData).slice(0, 800)}`;
       console.error("[optimize-study-plan]", emptyMsg);
       throw new Error(emptyMsg);
     }
@@ -213,84 +267,13 @@ serve(async (req: Request) => {
     // ---------------------------------------------------------------------------
     // Parse and validate LLM output (with truncation recovery)
     // ---------------------------------------------------------------------------
-    // ---------------------------------------------------------------------------
-    // Generic JSON recovery for truncated LLM output
-    // ---------------------------------------------------------------------------
-    function recoverJson(text: string): { topics: TopicFromLLM[] } | null {
-      // Try to find the outermost opening brace
-      const firstBrace = text.indexOf("{");
-      if (firstBrace === -1) return null;
-
-      let depth = 0;
-      let lastCompleteObjectEnd = -1;
-      let lastCompleteObjectStart = firstBrace;
-
-      for (let i = firstBrace; i < text.length; i++) {
-        const ch = text[i];
-        if (ch === "{") {
-          if (depth === 0) lastCompleteObjectStart = i;
-          depth++;
-        } else if (ch === "}") {
-          depth--;
-          if (depth === 0) {
-            // Found a complete object at the root level
-            lastCompleteObjectEnd = i;
-          } else if (depth === 1) {
-            // Completed a nested object (like a topic)
-            // Mark that we completed a sub-object
-          }
-        }
-      }
-
-      // If depth > 0, we are mid-object. Try to salvage complete topics.
-      // Strategy: find all completed `}, {` patterns (topics separated by comma)
-      if (depth > 0 && lastCompleteObjectEnd > firstBrace) {
-        // We have at least one complete closing brace
-        const partialJson = text.substring(firstBrace, lastCompleteObjectEnd + 1) + "]}";
-        try {
-          return JSON.parse(partialJson);
-        } catch {
-          // fall through
-        }
-      }
-
-      // Last resort: try to extract anything that looks like a valid topic
-      // by finding all "name" keys
-      try {
-        const nameMatches = [...text.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
-        if (nameMatches.length > 0) {
-          // Just return whatever we can salvage - even empty topics with just names
-          return { topics: nameMatches.map((m, i) => ({
-            name: m[1],
-            subject: "",
-            priority_order: i + 1,
-            marks_impact: 5,
-            importance: 5,
-            effort: "medium" as const,
-            pyq_frequency: 5,
-            proficiency: 30,
-            explanation: "",
-            study_content: "",
-            quiz_data: [],
-          }))};
-        }
-      } catch {
-        return null;
-      }
-
-      return null;
-    }
-
-    // Attempt 1: direct parse
     let parsed: { topics: TopicFromLLM[] };
-    const parseAttempt = rawContent;
 
     try {
-      parsed = JSON.parse(parseAttempt);
+      parsed = JSON.parse(rawContent);
     } catch {
-      // Attempt 2: try to recover truncated JSON
       console.warn("[optimize-study-plan] Direct JSON parse failed, attempting truncation recovery...");
-      const recovered = recoverJson(parseAttempt);
+      const recovered = recoverJson(rawContent);
       if (recovered) {
         parsed = recovered;
         console.log("[optimize-study-plan] Recovery succeeded with", parsed.topics?.length, "topics");
