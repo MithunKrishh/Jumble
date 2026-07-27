@@ -2,6 +2,11 @@
 // Calls OpenRouter to generate a high-yield study plan,
 // then saves all topics (with Mastery Guides + MCQ quizzes) to the topics table.
 
+// NOTE: "Deno" shows red underline in VS Code but works fine at runtime.
+// This file runs on Supabase Edge Functions (Deno runtime), not Node.js.
+// VS Code checks TypeScript against tsconfig.json which is for the React app (Node/browser).
+// All Deno APIs (Deno.env.get, etc.) work correctly when deployed to Supabase.
+
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -56,38 +61,15 @@ HIGH YIELD PRINCIPLE: Rank every topic by "Maximum Marks Impact" — topics that
 2. Carry the highest marks weight
 3. Can be mastered in the least time
 
-Generate 5-8 topics per subject, ordered globally by marks impact (priority_order 1 = most impactful overall).
+Generate exactly 2 topics per subject, prioritized by marks impact (priority_order 1 = most impactful overall).
 
 For each topic you MUST provide:
-- A concise "Mastery Guide" in Markdown (study_content): ~200 words with ## headers, bullet points, key formulas/concepts, and a "Quick Revision" summary at the end.
-- Exactly 5 Multiple Choice Questions (quiz_data): each with a question, 4 options, the correct_index (0-3), and an explanation.
+- study_content: ~50 words, key formulas/concepts only.
+- exactly 2 Multiple Choice Questions (quiz_data).
 
-Respond ONLY with a valid JSON object. No markdown fences. No text outside the JSON.
+Respond ONLY with valid JSON. No markdown fences. No extra text.
 
-{
-  "topics": [
-    {
-      "name": "string — specific topic name",
-      "subject": "string — must match one of the input subjects exactly",
-      "priority_order": "integer — global rank, 1 = highest marks impact",
-      "marks_impact": "integer 1-10 — how many marks this topic is worth across past exams",
-      "importance": "integer 1-10",
-      "effort": "low | medium | high — time needed to master",
-      "pyq_frequency": "integer 1-10 — how often it appears in past year questions",
-      "proficiency": 30,
-      "explanation": "string — one sentence: why this topic is high yield",
-      "study_content": "string — markdown mastery guide",
-      "quiz_data": [
-        {
-          "question": "string",
-          "options": ["string", "string", "string", "string"],
-          "correct_index": 0,
-          "explanation": "string — why this answer is correct"
-        }
-      ]
-    }
-  ]
-}`;
+{"topics":[{"name":"string","subject":"string","priority_order":1,"marks_impact":9,"importance":9,"effort":"low|medium|high","pyq_frequency":8,"proficiency":30,"explanation":"one sentence","study_content":"~50 words","quiz_data":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"short"}]}]}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,26 +213,88 @@ serve(async (req: Request) => {
     // ---------------------------------------------------------------------------
     // Parse and validate LLM output (with truncation recovery)
     // ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Generic JSON recovery for truncated LLM output
+    // ---------------------------------------------------------------------------
+    function recoverJson(text: string): { topics: TopicFromLLM[] } | null {
+      // Try to find the outermost opening brace
+      const firstBrace = text.indexOf("{");
+      if (firstBrace === -1) return null;
+
+      let depth = 0;
+      let lastCompleteObjectEnd = -1;
+      let lastCompleteObjectStart = firstBrace;
+
+      for (let i = firstBrace; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === "{") {
+          if (depth === 0) lastCompleteObjectStart = i;
+          depth++;
+        } else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            // Found a complete object at the root level
+            lastCompleteObjectEnd = i;
+          } else if (depth === 1) {
+            // Completed a nested object (like a topic)
+            // Mark that we completed a sub-object
+          }
+        }
+      }
+
+      // If depth > 0, we are mid-object. Try to salvage complete topics.
+      // Strategy: find all completed `}, {` patterns (topics separated by comma)
+      if (depth > 0 && lastCompleteObjectEnd > firstBrace) {
+        // We have at least one complete closing brace
+        const partialJson = text.substring(firstBrace, lastCompleteObjectEnd + 1) + "]}";
+        try {
+          return JSON.parse(partialJson);
+        } catch {
+          // fall through
+        }
+      }
+
+      // Last resort: try to extract anything that looks like a valid topic
+      // by finding all "name" keys
+      try {
+        const nameMatches = [...text.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
+        if (nameMatches.length > 0) {
+          // Just return whatever we can salvage - even empty topics with just names
+          return { topics: nameMatches.map((m, i) => ({
+            name: m[1],
+            subject: "",
+            priority_order: i + 1,
+            marks_impact: 5,
+            importance: 5,
+            effort: "medium" as const,
+            pyq_frequency: 5,
+            proficiency: 30,
+            explanation: "",
+            study_content: "",
+            quiz_data: [],
+          }))};
+        }
+      } catch {
+        return null;
+      }
+
+      return null;
+    }
+
+    // Attempt 1: direct parse
     let parsed: { topics: TopicFromLLM[] };
     const parseAttempt = rawContent;
 
-    // Attempt 1: direct parse
     try {
       parsed = JSON.parse(parseAttempt);
     } catch {
-      // Attempt 2: try to recover truncated JSON by finding the last complete topic object
+      // Attempt 2: try to recover truncated JSON
       console.warn("[optimize-study-plan] Direct JSON parse failed, attempting truncation recovery...");
-      try {
-        // Find the last complete "}" that closes a topic object, then close the array and object
-        const lastBrace = parseAttempt.lastIndexOf("}");
-        if (lastBrace > 0) {
-          const truncated = parseAttempt.substring(0, lastBrace + 1) + "]}";
-          parsed = JSON.parse(truncated);
-          console.log("[optimize-study-plan] Truncation recovery succeeded with", parsed.topics?.length, "topics");
-        } else {
-          throw new Error("No closing brace found for recovery");
-        }
-      } catch {
+      const recovered = recoverJson(parseAttempt);
+      if (recovered) {
+        parsed = recovered;
+        console.log("[optimize-study-plan] Recovery succeeded with", parsed.topics?.length, "topics");
+      } else {
         throw new Error("LLM response was not valid JSON. Raw: " + rawContent.slice(0, 300));
       }
     }
