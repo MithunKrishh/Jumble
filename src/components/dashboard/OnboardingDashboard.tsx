@@ -6,17 +6,17 @@ import { Slider } from "@/components/ui/slider";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { 
-  ArrowRight, 
-  Calendar as CalendarIcon, 
-  Loader2, 
-  Plus, 
-  Sparkles, 
-  X, 
-  Upload, 
-  FileText, 
-  Trash2, 
-  CheckCircle2, 
+import {
+  ArrowRight,
+  Calendar as CalendarIcon,
+  Loader2,
+  Plus,
+  Sparkles,
+  X,
+  Upload,
+  FileText,
+  Trash2,
+  CheckCircle2,
   HelpCircle,
   Gauge,
   BookOpen
@@ -58,7 +58,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
   const [examName, setExamName] = useState("");
   const [examDate, setExamDate] = useState<Date>();
   const [targetGoal, setTargetGoal] = useState("");
-  
+
   const [subjects, setSubjects] = useState<string[]>([]);
   const [newSubject, setNewSubject] = useState("");
   const [subjectConfidence, setSubjectConfidence] = useState<Record<string, ConfidenceLevel>>({});
@@ -69,7 +69,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
 
   const [dailyHours, setDailyHours] = useState([4]);
   const [sessionDuration, setSessionDuration] = useState("45");
-  
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState(0);
 
@@ -77,7 +77,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
     "Analyzing exam weightage pattern...",
     "Evaluating subject confidence baselines...",
     "Processing uploaded study materials & PYQs...",
-    "Ranking topics by maximum marks impact...",
+    "Curating your high-yield plan...",
     "Generating interactive guides & quiz bank...",
     "Finalizing your AI study plan..."
   ];
@@ -215,9 +215,10 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
       });
 
       if (fnError || !data?.success) {
-        const reason = fnError?.message || data?.error || "Unknown error from AI plan generator";
-        console.error("[optimize-study-plan] Edge function failed:", reason);
-        throw new Error(`AI plan generation failed: ${reason}`);
+        const detailMsg = data?.detail ? `\nDetails: ${data.detail}` : "";
+        const reason = data?.error || fnError?.message || "Unknown error from AI plan generator";
+        console.error("[optimize-study-plan] Edge function failed:", reason, detailMsg);
+        throw new Error(`AI plan generation failed: ${reason}${detailMsg}`);
       }
 
       // 4. Bust topic cache so ActiveDashboard re-fetches fresh rows immediately
@@ -296,7 +297,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
   return (
     <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30 flex flex-col">
       <div className="flex-1 flex flex-col max-w-3xl w-full mx-auto px-6 py-10 md:py-16 justify-center">
-        
+
         {/* Progress Tracker Bar */}
         <div className="mb-10 space-y-2">
           <div className="flex justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -305,12 +306,12 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
           </div>
           <div className="flex gap-2 items-center">
             {steps.map((s, i) => (
-              <div 
-                key={s} 
+              <div
+                key={s}
                 className={cn(
                   "h-2 rounded-full transition-all duration-500 flex-1",
                   step === i + 1 ? "bg-cyan-400" : step > i + 1 ? "bg-cyan-400/50" : "bg-white/10"
-                )} 
+                )}
               />
             ))}
           </div>
@@ -322,13 +323,13 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
             <div className="animate-in fade-in slide-in-from-bottom-6 duration-500 space-y-8">
               <div>
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
-                  What exam are you <br/><span className="text-cyan-400">preparing for?</span>
+                  What exam are you <br /><span className="text-cyan-400">preparing for?</span>
                 </h1>
                 <p className="mt-3 text-slate-400 text-base">
                   Specify your target exam and date so AI can compute topic marks weightage.
                 </p>
               </div>
-              
+
               <div className="space-y-6 max-w-xl">
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2 block">
@@ -340,7 +341,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
                     value={examName}
                     onChange={(e) => setExamName(e.target.value)}
                   />
-                  
+
                   {/* Presets */}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="text-xs text-slate-500 self-center mr-1">Presets:</span>
@@ -351,7 +352,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
                         onClick={() => setExamName(preset)}
                         className={cn(
                           "px-3 py-1 rounded-full text-xs font-medium border transition-colors",
-                          examName === preset 
+                          examName === preset
                             ? "border-cyan-400 bg-cyan-400/10 text-cyan-300"
                             : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
                         )}
@@ -361,7 +362,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
                     ))}
                   </div>
                 </div>
-                
+
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2 block">
@@ -413,13 +414,13 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
             <div className="animate-in fade-in slide-in-from-bottom-6 duration-500 space-y-8">
               <div>
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
-                  Which subjects are in your <br/><span className="text-cyan-400">syllabus?</span>
+                  Which subjects are in your <br /><span className="text-cyan-400">syllabus?</span>
                 </h1>
                 <p className="mt-3 text-slate-400 text-base">
                   Add subjects and rate your current confidence so we prioritize weaker areas.
                 </p>
               </div>
-              
+
               <div className="space-y-6 max-w-xl">
                 <div className="relative flex gap-2">
                   <Input
@@ -429,7 +430,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
                     onChange={(e) => setNewSubject(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && addSubject()}
                   />
-                  <Button 
+                  <Button
                     type="button"
                     onClick={() => addSubject()}
                     className="h-14 px-6 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold"
@@ -469,8 +470,8 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
                                       ? level === "low"
                                         ? "bg-rose-500/20 border-rose-500 text-rose-300"
                                         : level === "medium"
-                                        ? "bg-amber-500/20 border-amber-500 text-amber-300"
-                                        : "bg-emerald-500/20 border-emerald-500 text-emerald-300"
+                                          ? "bg-amber-500/20 border-amber-500 text-amber-300"
+                                          : "bg-emerald-500/20 border-emerald-500 text-emerald-300"
                                       : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10"
                                   )}
                                 >
@@ -501,13 +502,13 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
             <div className="animate-in fade-in slide-in-from-bottom-6 duration-500 space-y-8">
               <div>
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
-                  Study materials & <br/><span className="text-cyan-400">Past Year Papers</span>
+                  Study materials & <br /><span className="text-cyan-400">Past Year Papers</span>
                 </h1>
                 <p className="mt-3 text-slate-400 text-base">
                   Upload syllabus documents, notes, or PYQ PDFs to tailor topic priority to your exact exam pattern.
                 </p>
               </div>
-              
+
               <div className="space-y-6 max-w-2xl">
                 {/* File Upload Dropzone */}
                 <div>
@@ -588,13 +589,13 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
             <div className="animate-in fade-in slide-in-from-bottom-6 duration-500 space-y-8">
               <div>
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
-                  Daily Study <br/><span className="text-cyan-400">Availability</span>
+                  Daily Study <br /><span className="text-cyan-400">Availability</span>
                 </h1>
                 <p className="mt-3 text-slate-400 text-base">
                   How many hours can you dedicate each day to follow this study plan?
                 </p>
               </div>
-              
+
               <div className="max-w-xl py-6 space-y-8">
                 <div className="p-6 rounded-3xl bg-zinc-900/80 border border-white/10 space-y-6">
                   <div className="flex items-end justify-between">
@@ -607,7 +608,7 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
                     </div>
                     <Gauge className="w-10 h-10 text-cyan-400/40" />
                   </div>
-                  
+
                   <Slider
                     value={dailyHours}
                     onValueChange={setDailyHours}
@@ -647,21 +648,21 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
         {/* Bottom Navigation */}
         <div className="flex items-center gap-4 pt-8 mt-auto border-t border-white/10">
           {step > 1 && (
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               onClick={prevStep}
               className="text-base px-6 h-12 rounded-2xl hover:bg-white/5 text-slate-300"
             >
               Back
             </Button>
           )}
-          
-          <Button 
+
+          <Button
             onClick={step === 4 ? handleSubmit : nextStep}
             className={cn(
               "text-base px-8 h-12 rounded-2xl font-bold ml-auto transition-all gap-2",
-              step === 4 
-                ? "bg-cyan-400 hover:bg-cyan-300 text-slate-950 px-10 shadow-lg shadow-cyan-500/25" 
+              step === 4
+                ? "bg-cyan-400 hover:bg-cyan-300 text-slate-950 px-10 shadow-lg shadow-cyan-500/25"
                 : "bg-white text-slate-950 hover:bg-slate-200"
             )}
           >

@@ -1,6 +1,7 @@
 // Supabase Edge Function: optimize-study-plan
-// Calls Google Gemini (REST API) to generate high-yield study plan,
+// Calls OpenRouter to generate high-yield study plan,
 // then saves all topics (with Mastery Guides + MCQ quizzes) to the topics table.
+// Uses openrouter/auto for automatic model routing, with stable fallbacks.
 
 // NOTE: "Deno" shows red underline in VS Code but works fine at runtime.
 // This file runs on Supabase Edge Functions (Deno runtime), not Node.js.
@@ -14,7 +15,7 @@ const corsHeaders = {
 };
 
 // ---------------------------------------------------------------------------
-// Build the Gemini prompt enriched with study_materials_description
+// Build the Academic Strategist prompt enriched with study_materials_description
 // ---------------------------------------------------------------------------
 function buildPrompt(
   examName: string,
@@ -25,7 +26,7 @@ function buildPrompt(
 ): string {
   return `You are an elite exam preparation strategist specializing in HIGH YIELD study plans.
 
-MISSION: Generate a complete, prioritized syllabus for "${examName}" (exam date: ${examDate}).
+MISSION: Generate a prioritized syllabus for "${examName}" (exam date: ${examDate}).
 Subjects to cover: ${subjects.join(", ")}.
 Daily study availability: ${dailyHours} hours/day.
 Student's enrolled resources / study materials: ${studyMaterials || "Not specified — use standard syllabus weightage."}
@@ -36,7 +37,7 @@ Rank every topic by "Maximum Marks Impact". Prioritize topics that:
 2. Carry the highest marks weight in the exam
 3. Can be mastered in the least time for maximum score gain
 
-Generate exactly 2 topics per subject, prioritized by marks impact (priority_order 1 = most impactful overall).
+Generate exactly the top 5 highest-yield topics across ALL subjects (combined), ranked by marks impact (priority_order 1 = most impactful overall). Do NOT generate more than 5 topics total.
 
 For each topic you MUST return:
 - marks_impact: A concise string describing exactly how many marks this topic can contribute and why (e.g. "15-20 marks: 3-4 direct PYQ questions every year")
@@ -44,6 +45,7 @@ For each topic you MUST return:
 - quiz_data: Exactly 5 multiple-choice questions testing the most critical concepts. Each question must have 4 options and the correct_answer must match one of the options exactly (same casing/spelling).
 
 IMPORTANT: The correct_answer field must be the exact text of one of the options. Do NOT use indices.
+IMPORTANT: If you include math formulas, use plain text notation (e.g. "E = k*q/r^2", "F = ma", "x = (-b +/- sqrt(b^2 - 4ac)) / (2a)"). Do NOT use LaTeX and do NOT use any backslashes in your response.
 
 Respond ONLY with valid JSON matching this exact schema:
 {
@@ -65,7 +67,20 @@ Respond ONLY with valid JSON matching this exact schema:
   ]
 }
 
-No markdown fences, no extra text. Pure JSON only.`;
+No markdown fences, no extra text. Pure JSON only. No backslashes.`;
+}
+
+// ---------------------------------------------------------------------------
+// Robust JSON extractor: finds the first "{" and last "}" to handle
+// free models that prepend/append prose before/after the JSON payload.
+// ---------------------------------------------------------------------------
+function extractJsonObject(raw: string): string | null {
+  const firstOpen = raw.indexOf("{");
+  const lastClose = raw.lastIndexOf("}");
+  if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+    return raw.slice(firstOpen, lastClose + 1);
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,11 +111,11 @@ serve(async (req: Request) => {
       );
     }
 
-    const geminiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!geminiKey) {
-      console.error("[optimize-study-plan] GEMINI_API_KEY secret is not configured.");
+    const openRouterKey = Deno.env.get("OPENROUTER_API_KEY");
+    if (!openRouterKey) {
+      console.error("[optimize-study-plan] OPENROUTER_API_KEY secret is not configured.");
       return new Response(
-        JSON.stringify({ error: "GEMINI_API_KEY secret is not configured on this Supabase project." }),
+        JSON.stringify({ error: "AI provider API key is not configured on this Supabase project." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -144,8 +159,119 @@ serve(async (req: Request) => {
     );
 
     // ---------------------------------------------------------------------------
-    // Call Gemini API via REST (gemini-1.5-flash) with structured output
+    // Call OpenRouter API with Academic Strategist system prompt
     // ---------------------------------------------------------------------------
+    const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
+
+    // Define model fallback chain
+    // openrouter/auto lets OpenRouter pick the best available model automatically.
+    // Fallbacks are stable, widely-available models.
+    const modelChain = [
+      "openrouter/auto",
+      "deepseek/deepseek-chat",
+      "google/gemini-flash-1.5",
+    ];
+
+    let rawText: string | null = null;
+    let lastModelError: string | null = null;
+
+    for (const model of modelChain) {
+      console.log(`[optimize-study-plan] Attempting OpenRouter model: ${model}`);
+
+      const controller = new AbortController();
+      const timeoutMs = 30_000; // 30 seconds per model
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      let res: Response;
+      try {
+        res = await fetch(openRouterUrl, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openRouterKey}`,
+            "HTTP-Referer": "https://jumble.study",
+            "X-Title": "Jumble Study Planner",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: "system",
+                content: "You are an Academic Strategist. Respond only with valid JSON matching the provided schema. No markdown fences, no explanation outside the JSON object.",
+              },
+              {
+                role: "user",
+                content: userPrompt,
+              },
+            ],
+            temperature: 0.4,
+            max_tokens: 16384,
+          }),
+        });
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        const msg = fetchErr instanceof Error ? fetchErr.message : "Network error";
+        lastModelError = `Model ${model} failed (network): ${msg}`;
+        console.error(`[optimize-study-plan] ${lastModelError}`);
+        continue;
+      }
+
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        const apiResponseText = await res.text();
+        lastModelError = `Model ${model} returned status ${res.status}: ${apiResponseText}`;
+        console.error(`[optimize-study-plan] ${lastModelError}`);
+        continue;
+      }
+
+      const data = await res.json();
+      console.log(
+        `[optimize-study-plan] Response from ${model}:`,
+        JSON.stringify({
+          choices: data.choices?.length,
+          usage: data.usage,
+        })
+      );
+
+      const content = data.choices?.[0]?.message?.content;
+      if (content && typeof content === "string") {
+        rawText = content;
+        console.log(`[optimize-study-plan] Using model ${model} (success). Raw length: ${rawText.length}`);
+        break; // Success — exit the fallback loop
+      } else {
+        lastModelError = `Model ${model} returned an empty or invalid response body.`;
+        console.error(`[optimize-study-plan] ${lastModelError}`);
+      }
+    }
+
+    // If all models in the chain failed, return the last error
+    if (rawText === null) {
+      return new Response(
+        JSON.stringify({
+          error: `All OpenRouter models failed. Last error: ${lastModelError}`,
+          detail: lastModelError,
+        }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Step 1: Robust JSON extraction — locate the first "{" and last "}"
+    const extractedJson = extractJsonObject(rawText);
+    if (!extractedJson) {
+      const err = new Error("Could not locate a JSON object in the AI response.");
+      return new Response(
+        JSON.stringify({ error: err.message, detail: rawText }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Step 2: Sanitize backslashes (unescaped LaTeX like \frac breaks JSON.parse)
+    // Replace single backslashes not followed by a JSON-valid escape char with double backslashes
+    const sanitizedJson = extractedJson.replace(/\\(?!["\\\/bfnrtu])/g, "\\\\");
+
+    // Step 3: Parse the JSON response
     let parsedTopics: Array<{
       name: string;
       subject: string;
@@ -157,154 +283,25 @@ serve(async (req: Request) => {
         options: string[];
         correct_answer: string;
       }>;
-    }> | null = null;
+    }> = [];
 
-    // Try models in order: gemini-2.0-flash (supports responseSchema) -> gemini-1.5-flash (responseMimeType only)
-    const MODELS_TO_TRY = [
-      { model: "gemini-2.0-flash", useSchema: true },
-      { model: "gemini-1.5-flash", useSchema: false },
-    ];
-
-    let lastModelError = "";
-
-    for (const { model, useSchema } of MODELS_TO_TRY) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-
-      console.log(`[optimize-study-plan] Trying model: ${model} (useSchema: ${useSchema})`);
-
-      const controller = new AbortController();
-      const timeoutMs = 90_000;
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const responseSchema = {
-        type: "object",
-        properties: {
-          topics: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                subject: { type: "string" },
-                priority_order: { type: "number" },
-                marks_impact: { type: "string" },
-                study_content: { type: "string" },
-                quiz_data: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      question: { type: "string" },
-                      options: {
-                        type: "array",
-                        items: { type: "string" },
-                        minItems: 4,
-                        maxItems: 4,
-                      },
-                      correct_answer: { type: "string" },
-                    },
-                    required: ["question", "options", "correct_answer"],
-                  },
-                  minItems: 5,
-                  maxItems: 5,
-                },
-              },
-              required: ["name", "subject", "priority_order", "marks_impact", "study_content", "quiz_data"],
-            },
-          },
-        },
-        required: ["topics"],
-      };
-
-      const generationConfig: Record<string, unknown> = {
-        temperature: 0.4,
-        maxOutputTokens: 16384,
-        responseMimeType: "application/json",
-      };
-
-      // Only include responseSchema for models that support it (gemini-2.0-flash+)
-      if (useSchema) {
-        generationConfig.responseSchema = responseSchema;
-      }
-
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          signal: controller.signal,
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            system_instruction: {
-              parts: [{ text: "You are an expert exam preparation strategist. Respond only with valid JSON matching the provided schema. No markdown fences, no explanation outside the JSON object." }],
-            },
-            contents: [
-              {
-                role: "user",
-                parts: [{ text: userPrompt }],
-              },
-            ],
-            generationConfig,
-          }),
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-          const errText = await res.text();
-          lastModelError = `Gemini API error (${res.status}) for model ${model}: ${errText.slice(0, 500)}`;
-          console.warn(`[optimize-study-plan] Model ${model} failed:`, lastModelError);
-          continue;
-        }
-
-        const geminiData = await res.json();
-        console.log(
-          `[optimize-study-plan] Model ${model} response:`,
-          JSON.stringify({
-            candidates: geminiData.candidates?.length,
-            usage: geminiData.usageMetadata,
-          })
+    try {
+      const parsed = JSON.parse(sanitizedJson);
+      if (!parsed.topics || !Array.isArray(parsed.topics) || parsed.topics.length === 0) {
+        const err = new Error("AI response did not contain any topics.");
+        return new Response(
+          JSON.stringify({ error: err.message, detail: JSON.stringify(parsed) }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
-
-        // Extract text from Gemini response
-        const candidate = geminiData.candidates?.[0];
-        const rawText = candidate?.content?.parts?.[0]?.text;
-
-        if (!rawText) {
-          lastModelError = `Gemini model ${model} returned empty response.`;
-          console.warn("[optimize-study-plan]", lastModelError);
-          continue;
-        }
-
-        console.log("[optimize-study-plan] Raw Gemini response length:", rawText.length);
-
-        // Parse the structured JSON response
-        const parsed = JSON.parse(rawText);
-        if (!parsed.topics || !Array.isArray(parsed.topics) || parsed.topics.length === 0) {
-          lastModelError = `Gemini model ${model} returned no topics.`;
-          console.warn("[optimize-study-plan]", lastModelError);
-          continue;
-        }
-
-        parsedTopics = parsed.topics;
-        console.log("[optimize-study-plan] Successfully parsed", parsedTopics.length, "topics from Gemini using", model);
-        break;
-      } catch (modelErr) {
-        clearTimeout(timeoutId);
-        const msg = modelErr instanceof Error ? modelErr.message : "Unknown error";
-        lastModelError = `Model ${model} failed: ${msg}`;
-        console.warn(`[optimize-study-plan]`, lastModelError);
-        continue;
-      } finally {
-        clearTimeout(timeoutId);
       }
-    }
-
-    if (!parsedTopics || parsedTopics.length === 0) {
-      console.error("[optimize-study-plan] All models failed. Last error:", lastModelError);
+      parsedTopics = parsed.topics;
+      console.log("[optimize-study-plan] Successfully parsed", parsedTopics.length, "topics from OpenRouter");
+    } catch (parseErr) {
+      const msg = parseErr instanceof Error ? parseErr.message : "Unknown parse error";
+      console.error("[optimize-study-plan] JSON parse failed:", msg);
       return new Response(
-        JSON.stringify({ error: "Gemini API failed to process study plan" }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ error: `Failed to parse JSON: ${msg}`, detail: extractedJson }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -345,8 +342,13 @@ serve(async (req: Request) => {
       });
     };
 
-    // Insert the AI-generated topics (parsedTopics is guaranteed non-null here due to the check above)
-    const topicRows = parsedTopics!.map((t, idx) => {
+    // Enforce max 5 topics to keep response size manageable
+    if (parsedTopics.length > 5) {
+      parsedTopics = parsedTopics.slice(0, 5);
+    }
+
+    // Insert the AI-generated topics
+    const topicRows = parsedTopics.map((t, idx) => {
       const marksNum = extractMarksNumber(t.marks_impact || "");
       return {
         user_id,
@@ -368,7 +370,10 @@ serve(async (req: Request) => {
     const { error: insertError } = await supabaseAdmin.from("topics").insert(topicRows);
 
     if (insertError) {
-      throw new Error(`Failed to save topics to database: ${insertError.message}`);
+      return new Response(
+        JSON.stringify({ error: `Failed to save topics to database: ${insertError.message}` }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     return new Response(
@@ -383,7 +388,7 @@ serve(async (req: Request) => {
     const message = err instanceof Error ? err.message : "Unknown error occurred";
     console.error("[optimize-study-plan] Error:", message);
     return new Response(
-      JSON.stringify({ error: "Gemini API failed to process study plan" }),
+      JSON.stringify({ error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
