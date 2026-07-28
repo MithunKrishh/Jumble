@@ -1,5 +1,5 @@
 // Supabase Edge Function: optimize-study-plan
-// Calls Google Gemini (via @google/genai SDK) to generate high-yield study plan,
+// Calls Google Gemini (REST API) to generate high-yield study plan,
 // then saves all topics (with Mastery Guides + MCQ quizzes) to the topics table.
 
 // NOTE: "Deno" shows red underline in VS Code but works fine at runtime.
@@ -7,54 +7,10 @@
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { GoogleGenAI } from "npm:@google/genai@0.2.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-// ---------------------------------------------------------------------------
-// Gemini Structured Output Schema (for responseMimeType: "application/json")
-// ---------------------------------------------------------------------------
-const responseSchema = {
-  type: "object",
-  properties: {
-    topics: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          subject: { type: "string" },
-          priority_order: { type: "number" },
-          marks_impact: { type: "string" },
-          study_content: { type: "string" },
-          quiz_data: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                question: { type: "string" },
-                options: {
-                  type: "array",
-                  items: { type: "string" },
-                  minItems: 4,
-                  maxItems: 4,
-                },
-                correct_answer: { type: "string" },
-              },
-              required: ["question", "options", "correct_answer"],
-            },
-            minItems: 5,
-            maxItems: 5,
-          },
-        },
-        required: ["name", "subject", "priority_order", "marks_impact", "study_content", "quiz_data"],
-      },
-    },
-  },
-  required: ["topics"],
 };
 
 // ---------------------------------------------------------------------------
@@ -89,7 +45,27 @@ For each topic you MUST return:
 
 IMPORTANT: The correct_answer field must be the exact text of one of the options. Do NOT use indices.
 
-Respond ONLY with valid JSON matching the provided schema. No markdown fences, no extra text.`;
+Respond ONLY with valid JSON matching this exact schema:
+{
+  "topics": [
+    {
+      "name": "string",
+      "subject": "string",
+      "priority_order": number,
+      "marks_impact": "string",
+      "study_content": "string (Markdown)",
+      "quiz_data": [
+        {
+          "question": "string",
+          "options": ["string", "string", "string", "string"],
+          "correct_answer": "string"
+        }
+      ]
+    }
+  ]
+}
+
+No markdown fences, no extra text. Pure JSON only.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,9 +144,9 @@ serve(async (req: Request) => {
     );
 
     // ---------------------------------------------------------------------------
-    // Call Gemini API via @google/genai SDK (gemini-1.5-flash)
+    // Call Gemini API via REST (gemini-1.5-flash) with structured output
     // ---------------------------------------------------------------------------
-    let parsedResponse: { topics: Array<{
+    let parsedTopics: Array<{
       name: string;
       subject: string;
       priority_order: number;
@@ -181,70 +157,156 @@ serve(async (req: Request) => {
         options: string[];
         correct_answer: string;
       }>;
-    }> } | null = null;
+    }> | null = null;
 
-    try {
-      const genAI = new GoogleGenAI({ apiKey: geminiKey });
+    // Try models in order: gemini-2.0-flash (supports responseSchema) -> gemini-1.5-flash (responseMimeType only)
+    const MODELS_TO_TRY = [
+      { model: "gemini-2.0-flash", useSchema: true },
+      { model: "gemini-1.5-flash", useSchema: false },
+    ];
 
-      const model = "gemini-1.5-flash";
+    let lastModelError = "";
 
-      console.log(`[optimize-study-plan] Calling Gemini model: ${model} with structured output`);
+    for (const { model, useSchema } of MODELS_TO_TRY) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
-      const result = await genAI.models.generateContent({
-        model,
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: userPrompt }],
+      console.log(`[optimize-study-plan] Trying model: ${model} (useSchema: ${useSchema})`);
+
+      const controller = new AbortController();
+      const timeoutMs = 90_000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      const responseSchema = {
+        type: "object",
+        properties: {
+          topics: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                subject: { type: "string" },
+                priority_order: { type: "number" },
+                marks_impact: { type: "string" },
+                study_content: { type: "string" },
+                quiz_data: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      question: { type: "string" },
+                      options: {
+                        type: "array",
+                        items: { type: "string" },
+                        minItems: 4,
+                        maxItems: 4,
+                      },
+                      correct_answer: { type: "string" },
+                    },
+                    required: ["question", "options", "correct_answer"],
+                  },
+                  minItems: 5,
+                  maxItems: 5,
+                },
+              },
+              required: ["name", "subject", "priority_order", "marks_impact", "study_content", "quiz_data"],
+            },
           },
-        ],
-        config: {
-          systemInstruction: "You are an expert exam preparation strategist. Respond only with valid JSON matching the provided schema. No markdown fences, no explanation outside the JSON object.",
-          temperature: 0.4,
-          maxOutputTokens: 16384,
-          responseMimeType: "application/json",
-          responseSchema: responseSchema as any,
         },
-      });
+        required: ["topics"],
+      };
 
-      const rawText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) {
-        throw new Error("Gemini returned empty response text.");
+      const generationConfig: Record<string, unknown> = {
+        temperature: 0.4,
+        maxOutputTokens: 16384,
+        responseMimeType: "application/json",
+      };
+
+      // Only include responseSchema for models that support it (gemini-2.0-flash+)
+      if (useSchema) {
+        generationConfig.responseSchema = responseSchema;
       }
 
-      console.log("[optimize-study-plan] Raw Gemini response length:", rawText.length);
-
-      // Parse the structured JSON response
       try {
+        const res = await fetch(url, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            system_instruction: {
+              parts: [{ text: "You are an expert exam preparation strategist. Respond only with valid JSON matching the provided schema. No markdown fences, no explanation outside the JSON object." }],
+            },
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: userPrompt }],
+              },
+            ],
+            generationConfig,
+          }),
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errText = await res.text();
+          lastModelError = `Gemini API error (${res.status}) for model ${model}: ${errText.slice(0, 500)}`;
+          console.warn(`[optimize-study-plan] Model ${model} failed:`, lastModelError);
+          continue;
+        }
+
+        const geminiData = await res.json();
+        console.log(
+          `[optimize-study-plan] Model ${model} response:`,
+          JSON.stringify({
+            candidates: geminiData.candidates?.length,
+            usage: geminiData.usageMetadata,
+          })
+        );
+
+        // Extract text from Gemini response
+        const candidate = geminiData.candidates?.[0];
+        const rawText = candidate?.content?.parts?.[0]?.text;
+
+        if (!rawText) {
+          lastModelError = `Gemini model ${model} returned empty response.`;
+          console.warn("[optimize-study-plan]", lastModelError);
+          continue;
+        }
+
+        console.log("[optimize-study-plan] Raw Gemini response length:", rawText.length);
+
+        // Parse the structured JSON response
         const parsed = JSON.parse(rawText);
         if (!parsed.topics || !Array.isArray(parsed.topics) || parsed.topics.length === 0) {
-          throw new Error("Gemini returned no topics in structured output.");
+          lastModelError = `Gemini model ${model} returned no topics.`;
+          console.warn("[optimize-study-plan]", lastModelError);
+          continue;
         }
-        parsedResponse = parsed;
-        console.log("[optimize-study-plan] Successfully parsed", parsed.topics.length, "topics from Gemini");
-      } catch (parseErr) {
-        const msg = parseErr instanceof Error ? parseErr.message : "Unknown parse error";
-        throw new Error(`Failed to parse Gemini structured output: ${msg}. Raw: ${rawText.slice(0, 500)}`);
+
+        parsedTopics = parsed.topics;
+        console.log("[optimize-study-plan] Successfully parsed", parsedTopics.length, "topics from Gemini using", model);
+        break;
+      } catch (modelErr) {
+        clearTimeout(timeoutId);
+        const msg = modelErr instanceof Error ? modelErr.message : "Unknown error";
+        lastModelError = `Model ${model} failed: ${msg}`;
+        console.warn(`[optimize-study-plan]`, lastModelError);
+        continue;
+      } finally {
+        clearTimeout(timeoutId);
       }
-    } catch (geminiErr) {
-      const msg = geminiErr instanceof Error ? geminiErr.message : "Unknown Gemini error";
-      console.error("[optimize-study-plan] Gemini API call failed:", msg);
+    }
 
-      // Graceful fallback: return a standardized error instead of crashing
+    if (!parsedTopics || parsedTopics.length === 0) {
+      console.error("[optimize-study-plan] All models failed. Last error:", lastModelError);
       return new Response(
         JSON.stringify({ error: "Gemini API failed to process study plan" }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-
-    if (!parsedResponse) {
-      return new Response(
-        JSON.stringify({ error: "Gemini API failed to process study plan" }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const topics = parsedResponse.topics;
 
     // ---------------------------------------------------------------------------
     // Save to Supabase using service role (bypasses RLS)
@@ -260,7 +322,7 @@ serve(async (req: Request) => {
       console.error("Warning: could not delete old topics:", deleteError.message);
     }
 
-    // Transform marks_impact string to a numeric score for DB, keep as string as well
+    // Transform marks_impact string to a numeric score for DB
     const extractMarksNumber = (marksStr: string): number => {
       const match = marksStr.match(/(\d+)/);
       return match ? Math.min(10, Math.max(1, parseInt(match[1], 10) || 5)) : 5;
@@ -283,8 +345,8 @@ serve(async (req: Request) => {
       });
     };
 
-    // Insert the AI-generated topics
-    const topicRows = topics.map((t, idx) => {
+    // Insert the AI-generated topics (parsedTopics is guaranteed non-null here due to the check above)
+    const topicRows = parsedTopics!.map((t, idx) => {
       const marksNum = extractMarksNumber(t.marks_impact || "");
       return {
         user_id,
