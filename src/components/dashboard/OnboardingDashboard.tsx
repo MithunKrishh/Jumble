@@ -220,7 +220,10 @@ export const OnboardingDashboard = ({ userName }: OnboardingDashboardProps) => {
         throw new Error(`AI plan generation failed: ${reason}`);
       }
 
-      // 4. Save local state
+      // 4. Bust topic cache so ActiveDashboard re-fetches fresh rows immediately
+      dashboardStorage.bustTopicCache(user.id);
+
+      // 5. Save local state
       const initialState: DashboardState = {
         userId: user.id,
         examName: examName.trim(),

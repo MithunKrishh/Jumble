@@ -30,3 +30,5 @@ dist-ssr
 
 # Broken submodule
 src/Jumble---Unjumble-your-Chaos
+
+.vercel

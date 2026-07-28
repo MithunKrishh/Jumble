@@ -1,14 +1,13 @@
 // Supabase Edge Function: optimize-study-plan
-// Calls Google Gemini to generate a high-yield study plan,
+// Calls Google Gemini (via @google/genai SDK) to generate high-yield study plan,
 // then saves all topics (with Mastery Guides + MCQ quizzes) to the topics table.
 
 // NOTE: "Deno" shows red underline in VS Code but works fine at runtime.
 // This file runs on Supabase Edge Functions (Deno runtime), not Node.js.
-// VS Code checks TypeScript against tsconfig.json which is for the React app (Node/browser).
-// All Deno APIs (Deno.env.get, etc.) work correctly when deployed to Supabase.
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { GoogleGenAI } from "npm:@google/genai@0.2.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,31 +15,50 @@ const corsHeaders = {
 };
 
 // ---------------------------------------------------------------------------
-// Types
+// Gemini Structured Output Schema (for responseMimeType: "application/json")
 // ---------------------------------------------------------------------------
-interface QuizQuestion {
-  question: string;
-  options: [string, string, string, string];
-  correct_index: 0 | 1 | 2 | 3;
-  explanation: string;
-}
-
-interface TopicFromLLM {
-  name: string;
-  subject: string;
-  priority_order: number;
-  marks_impact: number;
-  importance: number;
-  effort: "low" | "medium" | "high";
-  pyq_frequency: number;
-  proficiency: number;
-  explanation: string;
-  study_content: string;
-  quiz_data: QuizQuestion[];
-}
+const responseSchema = {
+  type: "object",
+  properties: {
+    topics: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          subject: { type: "string" },
+          priority_order: { type: "number" },
+          marks_impact: { type: "string" },
+          study_content: { type: "string" },
+          quiz_data: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string" },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  minItems: 4,
+                  maxItems: 4,
+                },
+                correct_answer: { type: "string" },
+              },
+              required: ["question", "options", "correct_answer"],
+            },
+            minItems: 5,
+            maxItems: 5,
+          },
+        },
+        required: ["name", "subject", "priority_order", "marks_impact", "study_content", "quiz_data"],
+      },
+    },
+  },
+  required: ["topics"],
+};
 
 // ---------------------------------------------------------------------------
-// Build the Gemini prompt
+// Build the Gemini prompt enriched with study_materials_description
 // ---------------------------------------------------------------------------
 function buildPrompt(
   examName: string,
@@ -49,83 +67,29 @@ function buildPrompt(
   studyMaterials: string,
   dailyHours: number
 ): string {
-  return `You are an elite exam preparation strategist specializing in high-yield study plans.
+  return `You are an elite exam preparation strategist specializing in HIGH YIELD study plans.
 
-MISSION: Generate a complete syllabus for "${examName}" (exam date: ${examDate}).
+MISSION: Generate a complete, prioritized syllabus for "${examName}" (exam date: ${examDate}).
 Subjects to cover: ${subjects.join(", ")}.
 Daily study availability: ${dailyHours} hours/day.
-Student's resources: ${studyMaterials || "Not specified"}.
+Student's enrolled resources / study materials: ${studyMaterials || "Not specified — use standard syllabus weightage."}
 
-HIGH YIELD PRINCIPLE: Rank every topic by "Maximum Marks Impact" — topics that:
-1. Appear most frequently in past exams (high PYQ frequency)
-2. Carry the highest marks weight
-3. Can be mastered in the least time
+HIGH YIELD PRINCIPLE — Strictly enforce this:
+Rank every topic by "Maximum Marks Impact". Prioritize topics that:
+1. Appear most frequently in past exams (highest PYQ frequency)
+2. Carry the highest marks weight in the exam
+3. Can be mastered in the least time for maximum score gain
 
 Generate exactly 2 topics per subject, prioritized by marks impact (priority_order 1 = most impactful overall).
 
-For each topic you MUST provide:
-- study_content: ~50 words, key formulas/concepts only.
-- exactly 2 Multiple Choice Questions (quiz_data).
+For each topic you MUST return:
+- marks_impact: A concise string describing exactly how many marks this topic can contribute and why (e.g. "15-20 marks: 3-4 direct PYQ questions every year")
+- study_content: A detailed Markdown-formatted mastery guide covering key formulas, concepts, mnemonics, and high-yield points (300-500 words)
+- quiz_data: Exactly 5 multiple-choice questions testing the most critical concepts. Each question must have 4 options and the correct_answer must match one of the options exactly (same casing/spelling).
 
-Respond ONLY with valid JSON. No markdown fences. No extra text.
+IMPORTANT: The correct_answer field must be the exact text of one of the options. Do NOT use indices.
 
-{"topics":[{"name":"string","subject":"string","priority_order":1,"marks_impact":9,"importance":9,"effort":"low|medium|high","pyq_frequency":8,"proficiency":30,"explanation":"one sentence","study_content":"~50 words","quiz_data":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"short"}]}]}`;
-}
-
-// ---------------------------------------------------------------------------
-// Generic JSON recovery for truncated LLM output
-// ---------------------------------------------------------------------------
-function recoverJson(text: string): { topics: TopicFromLLM[] } | null {
-  const firstBrace = text.indexOf("{");
-  if (firstBrace === -1) return null;
-
-  let depth = 0;
-  let lastCompleteObjectEnd = -1;
-
-  for (let i = firstBrace; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === "{") {
-      depth++;
-    } else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        lastCompleteObjectEnd = i;
-      }
-    }
-  }
-
-  if (depth > 0 && lastCompleteObjectEnd > firstBrace) {
-    const partialJson = text.substring(firstBrace, lastCompleteObjectEnd + 1) + "]}";
-    try {
-      return JSON.parse(partialJson);
-    } catch {
-      // fall through
-    }
-  }
-
-  // Last resort: extract topic names via regex
-  try {
-    const nameMatches = [...text.matchAll(/"name"\s*:\s*"([^"]+)"/g)];
-    if (nameMatches.length > 0) {
-      return { topics: nameMatches.map((m, i) => ({
-        name: m[1],
-        subject: "",
-        priority_order: i + 1,
-        marks_impact: 5,
-        importance: 5,
-        effort: "medium" as const,
-        pyq_frequency: 5,
-        proficiency: 30,
-        explanation: "",
-        study_content: "",
-        quiz_data: [],
-      }))};
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
+Respond ONLY with valid JSON matching the provided schema. No markdown fences, no extra text.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,135 +130,125 @@ serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------------------
-    // Build prompt
-    // ---------------------------------------------------------------------------
-    const userPrompt = buildPrompt(
-      exam_name,
-      exam_date,
-      subjects,
-      study_materials_description ?? "",
-      daily_study_hours ?? 4
-    );
-
-    // ---------------------------------------------------------------------------
-    // Call Gemini API (with fallback models)
-    // ---------------------------------------------------------------------------
-    const MODELS_TO_TRY = [
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
-    ];
-
-    let geminiData: any = null;
-    let lastModelError = "";
-
-    for (const model of MODELS_TO_TRY) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-
-      const controller = new AbortController();
-      const timeoutMs = 60_000;
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        console.log(`[optimize-study-plan] Trying model: ${model}`);
-
-        const res = await fetch(url, {
-          method: "POST",
-          signal: controller.signal,
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            system_instruction: {
-              parts: [{ text: "You are an expert exam preparation strategist. Respond only with valid JSON. No markdown fences, no explanation outside the JSON object." }],
-            },
-            contents: [
-              {
-                role: "user",
-                parts: [{ text: userPrompt }],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.6,
-              maxOutputTokens: 16000,
-            },
-          }),
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-          const errText = await res.text();
-          lastModelError = `Gemini API error (${res.status}) for model ${model}: ${errText.slice(0, 300)}`;
-          console.warn(`[optimize-study-plan] Model ${model} failed:`, lastModelError);
-          continue;
-        }
-
-        geminiData = await res.json();
-        console.log(
-          `[optimize-study-plan] Model ${model} succeeded. Response:`,
-          JSON.stringify({
-            candidates: geminiData.candidates?.length,
-            usage: geminiData.usageMetadata,
-            model: model,
-          })
-        );
-        break;
-      } catch (err: unknown) {
-        clearTimeout(timeoutId);
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        lastModelError = `Model ${model} failed or timed out: ${msg}`;
-        console.warn(`[optimize-study-plan]`, lastModelError);
-        continue;
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    }
-
-    if (!geminiData) {
-      throw new Error(`All Gemini models failed. Last error: ${lastModelError}`);
-    }
-
-    // Extract text from Gemini response
-    const candidate = geminiData.candidates?.[0];
-    const rawContent = candidate?.content?.parts?.[0]?.text;
-
-    if (!rawContent) {
-      const emptyMsg = `Gemini returned an empty response. Full response: ${JSON.stringify(geminiData).slice(0, 800)}`;
-      console.error("[optimize-study-plan]", emptyMsg);
-      throw new Error(emptyMsg);
-    }
-
-    // ---------------------------------------------------------------------------
-    // Parse and validate LLM output (with truncation recovery)
-    // ---------------------------------------------------------------------------
-    let parsed: { topics: TopicFromLLM[] };
-
-    try {
-      parsed = JSON.parse(rawContent);
-    } catch {
-      console.warn("[optimize-study-plan] Direct JSON parse failed, attempting truncation recovery...");
-      const recovered = recoverJson(rawContent);
-      if (recovered) {
-        parsed = recovered;
-        console.log("[optimize-study-plan] Recovery succeeded with", parsed.topics?.length, "topics");
-      } else {
-        throw new Error("LLM response was not valid JSON. Raw: " + rawContent.slice(0, 300));
-      }
-    }
-
-    const topics: TopicFromLLM[] = parsed.topics;
-    if (!Array.isArray(topics) || topics.length === 0) {
-      throw new Error("LLM returned no topics. Check the prompt or model.");
-    }
-
-    // ---------------------------------------------------------------------------
-    // Save to Supabase using service role (bypasses RLS)
+    // Fetch study_materials_description from exam_contexts for enrichment
     // ---------------------------------------------------------------------------
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       { auth: { persistSession: false } }
     );
+
+    let enrichedStudyMaterials = study_materials_description ?? "";
+    if (!enrichedStudyMaterials) {
+      try {
+        const { data: examCtx } = await supabaseAdmin
+          .from("exam_contexts")
+          .select("study_materials_description")
+          .eq("user_id", user_id)
+          .single();
+
+        if (examCtx?.study_materials_description) {
+          enrichedStudyMaterials = examCtx.study_materials_description;
+          console.log("[optimize-study-plan] Injected study_materials_description from exam_contexts table.");
+        }
+      } catch (fetchErr) {
+        console.warn("[optimize-study-plan] Could not fetch exam_contexts, using provided value:", fetchErr);
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Build prompt
+    // ---------------------------------------------------------------------------
+    const userPrompt = buildPrompt(
+      exam_name,
+      exam_date,
+      subjects,
+      enrichedStudyMaterials,
+      daily_study_hours ?? 4
+    );
+
+    // ---------------------------------------------------------------------------
+    // Call Gemini API via @google/genai SDK (gemini-1.5-flash)
+    // ---------------------------------------------------------------------------
+    let parsedResponse: { topics: Array<{
+      name: string;
+      subject: string;
+      priority_order: number;
+      marks_impact: string;
+      study_content: string;
+      quiz_data: Array<{
+        question: string;
+        options: string[];
+        correct_answer: string;
+      }>;
+    }> } | null = null;
+
+    try {
+      const genAI = new GoogleGenAI({ apiKey: geminiKey });
+
+      const model = "gemini-1.5-flash";
+
+      console.log(`[optimize-study-plan] Calling Gemini model: ${model} with structured output`);
+
+      const result = await genAI.models.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: userPrompt }],
+          },
+        ],
+        config: {
+          systemInstruction: "You are an expert exam preparation strategist. Respond only with valid JSON matching the provided schema. No markdown fences, no explanation outside the JSON object.",
+          temperature: 0.4,
+          maxOutputTokens: 16384,
+          responseMimeType: "application/json",
+          responseSchema: responseSchema as any,
+        },
+      });
+
+      const rawText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) {
+        throw new Error("Gemini returned empty response text.");
+      }
+
+      console.log("[optimize-study-plan] Raw Gemini response length:", rawText.length);
+
+      // Parse the structured JSON response
+      try {
+        const parsed = JSON.parse(rawText);
+        if (!parsed.topics || !Array.isArray(parsed.topics) || parsed.topics.length === 0) {
+          throw new Error("Gemini returned no topics in structured output.");
+        }
+        parsedResponse = parsed;
+        console.log("[optimize-study-plan] Successfully parsed", parsed.topics.length, "topics from Gemini");
+      } catch (parseErr) {
+        const msg = parseErr instanceof Error ? parseErr.message : "Unknown parse error";
+        throw new Error(`Failed to parse Gemini structured output: ${msg}. Raw: ${rawText.slice(0, 500)}`);
+      }
+    } catch (geminiErr) {
+      const msg = geminiErr instanceof Error ? geminiErr.message : "Unknown Gemini error";
+      console.error("[optimize-study-plan] Gemini API call failed:", msg);
+
+      // Graceful fallback: return a standardized error instead of crashing
+      return new Response(
+        JSON.stringify({ error: "Gemini API failed to process study plan" }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!parsedResponse) {
+      return new Response(
+        JSON.stringify({ error: "Gemini API failed to process study plan" }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const topics = parsedResponse.topics;
+
+    // ---------------------------------------------------------------------------
+    // Save to Supabase using service role (bypasses RLS)
+    // ---------------------------------------------------------------------------
 
     // Clear any previously generated topics for this user
     const { error: deleteError } = await supabaseAdmin
@@ -306,22 +260,48 @@ serve(async (req: Request) => {
       console.error("Warning: could not delete old topics:", deleteError.message);
     }
 
+    // Transform marks_impact string to a numeric score for DB, keep as string as well
+    const extractMarksNumber = (marksStr: string): number => {
+      const match = marksStr.match(/(\d+)/);
+      return match ? Math.min(10, Math.max(1, parseInt(match[1], 10) || 5)) : 5;
+    };
+
+    // Transform quiz_data: convert correct_answer to correct_index for backwards compatibility
+    const transformQuizData = (
+      quizData: Array<{ question: string; options: string[]; correct_answer: string }>
+    ): Array<{ question: string; options: string[]; correct_index: number; explanation: string }> => {
+      return quizData.map((q) => {
+        const correctIndex = q.options.findIndex(
+          (opt) => opt.toLowerCase().trim() === q.correct_answer.toLowerCase().trim()
+        );
+        return {
+          question: q.question,
+          options: q.options,
+          correct_index: correctIndex >= 0 ? correctIndex : 0,
+          explanation: `Correct answer: ${q.correct_answer}`,
+        };
+      });
+    };
+
     // Insert the AI-generated topics
-    const topicRows = topics.map((t: TopicFromLLM) => ({
-      user_id,
-      name: t.name,
-      subject: t.subject,
-      priority_order: t.priority_order,
-      marks_impact: t.marks_impact,
-      importance: Math.min(10, Math.max(1, t.importance ?? 5)),
-      effort: ["low", "medium", "high"].includes(t.effort) ? t.effort : "medium",
-      pyq_frequency: Math.min(10, Math.max(1, t.pyq_frequency ?? 5)),
-      proficiency: 30,
-      explanation: t.explanation ?? "",
-      rank: t.priority_order,
-      study_content: t.study_content ?? "",
-      quiz_data: Array.isArray(t.quiz_data) ? t.quiz_data : [],
-    }));
+    const topicRows = topics.map((t, idx) => {
+      const marksNum = extractMarksNumber(t.marks_impact || "");
+      return {
+        user_id,
+        name: t.name,
+        subject: t.subject,
+        priority_order: t.priority_order ?? idx + 1,
+        marks_impact: marksNum,
+        importance: marksNum,
+        effort: "medium" as const,
+        pyq_frequency: marksNum,
+        proficiency: 30,
+        explanation: t.marks_impact || "",
+        rank: t.priority_order ?? idx + 1,
+        study_content: t.study_content ?? "",
+        quiz_data: transformQuizData(t.quiz_data || []),
+      };
+    });
 
     const { error: insertError } = await supabaseAdmin.from("topics").insert(topicRows);
 
@@ -341,7 +321,7 @@ serve(async (req: Request) => {
     const message = err instanceof Error ? err.message : "Unknown error occurred";
     console.error("[optimize-study-plan] Error:", message);
     return new Response(
-      JSON.stringify({ error: message }),
+      JSON.stringify({ error: "Gemini API failed to process study plan" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

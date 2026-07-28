@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { formatDistanceToNowStrict, differenceInDays, format } from "date-fns";
 import { 
   CheckCircle2, 
@@ -12,12 +12,9 @@ import {
   RotateCcw, 
   Upload, 
   FileText, 
-  Trash2, 
-  Clock, 
-  BookOpen, 
-  Award,
-  Layers,
-  ChevronRight
+  Clock,
+  ChevronRight,
+  TrendingUp
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -221,56 +218,81 @@ export const ActiveDashboard = ({
   const [uploadedMaterials, setUploadedMaterials] = useState<UploadedMaterial[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  // Cache version counter — increment to force re-fetch
+  const [cacheVersion, setCacheVersion] = useState(0);
+
+  const fetchTopics = useCallback(async () => {
+    if (!user) return;
+    setIsLoading(true);
+
+    const { data, error } = await supabase
+      .from("topics" as any)
+      .select("*")
+      .eq("user_id", user.id)
+      .order("priority_order", { ascending: true });
+
+    if (error) {
+      toast.error("Unable to load study plan topics.");
+      setTopics([]);
+    } else {
+      const loadedTopics = (data ?? []) as unknown as TopicRow[];
+      setTopics(loadedTopics);
+      
+      const mastered = new Set(
+        loadedTopics.filter((t) => (t.proficiency ?? 0) >= 100).map((t) => t.id)
+      );
+      setMasteredIds(mastered);
+    }
+
+    const savedState = dashboardStorage.load(user.id);
+    if (savedState?.uploads) {
+      setUploadedMaterials(savedState.uploads);
+    }
+
+    setIsLoading(false);
+  }, [user]);
+
+  // Fetch on mount and whenever cacheVersion changes (cache invalidation)
+  useEffect(() => {
+    fetchTopics();
+  }, [fetchTopics, cacheVersion]);
+
+  // Watch for cache bust events from OnboardingDashboard (storage-based)
   useEffect(() => {
     if (!user) return;
 
-    const fetchTopics = async () => {
-      setIsLoading(true);
-
-      const { data, error } = await supabase
-        .from("topics" as any)
-        .select("*")
-        .eq("user_id", user.id)
-        .order("priority_order", { ascending: true });
-
-      if (error) {
-        toast.error("Unable to load study plan topics.");
-        setTopics([]);
-      } else {
-        const loadedTopics = (data ?? []) as unknown as TopicRow[];
-        setTopics(loadedTopics);
-        
-        // Track mastered topics based on proficiency >= 100
-        const mastered = new Set(
-          loadedTopics.filter((t) => (t.proficiency ?? 0) >= 100).map((t) => t.id)
-        );
-        setMasteredIds(mastered);
-      }
-
-      // Load stored local state for uploads
-      const savedState = dashboardStorage.load(user.id);
-      if (savedState?.uploads) {
-        setUploadedMaterials(savedState.uploads);
-      }
-
-      setIsLoading(false);
+    const checkCacheVersion = () => {
+      const storedVersion = dashboardStorage.getTopicCacheVersion(user.id);
+      setCacheVersion((prev) => {
+        if (storedVersion > prev) {
+          return storedVersion;
+        }
+        return prev;
+      });
     };
 
-    fetchTopics();
+    // Check on mount
+    checkCacheVersion();
+
+    // Listen for storage changes (triggered when OnboardingDashboard calls bustTopicCache)
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key?.includes("jumble:cache-bust")) {
+        checkCacheVersion();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+
+    // Also poll every 3s as a fallback (same-tab updates)
+    const interval = setInterval(checkCacheVersion, 3000);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      clearInterval(interval);
+    };
   }, [user]);
 
   const daysToExam = Math.max(0, differenceInDays(new Date(examDate), new Date()));
   const daysLabel = formatDistanceToNowStrict(new Date(examDate), { addSuffix: true });
-
-  const totalMarks = useMemo(() => {
-    return topics.reduce((acc, t) => acc + (t.marks_impact ?? 0), 0);
-  }, [topics]);
-
-  const masteredMarks = useMemo(() => {
-    return topics
-      .filter((t) => masteredIds.has(t.id))
-      .reduce((acc, t) => acc + (t.marks_impact ?? 0), 0);
-  }, [topics, masteredIds]);
 
   const filteredTopics = useMemo(() => {
     return topics.filter((t) => {
@@ -350,19 +372,21 @@ export const ActiveDashboard = ({
         setUploadedMaterials((prev) => [...prev, material]);
       }
 
-      // Save to local storage state
       const existing = dashboardStorage.load(user.id);
       if (existing) {
         dashboardStorage.save({
           ...existing,
-          uploads: [...uploadedMaterials, ...Array.from(files).map((f) => ({
-            id: Date.now().toString(),
-            kind: f.name.toLowerCase().includes("pyq") ? "pyq" : "notes" as const,
-            fileName: f.name,
-            contentType: f.type,
-            extractedText: "",
-            createdAt: new Date().toISOString()
-          }))]
+          uploads: [...uploadedMaterials, ...Array.from(files).map((f) => {
+            const kindVal: "pyq" | "notes" = f.name.toLowerCase().includes("pyq") ? "pyq" : "notes";
+            return {
+              id: Date.now().toString(),
+              kind: kindVal,
+              fileName: f.name,
+              contentType: f.type,
+              extractedText: "",
+              createdAt: new Date().toISOString()
+            };
+          })]
         });
       }
 
@@ -421,9 +445,9 @@ export const ActiveDashboard = ({
 
   return (
     <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30">
-      <main className="mx-auto max-w-7xl px-4 pb-20 pt-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-5xl px-4 pb-20 pt-8 sm:px-6 lg:px-8">
         
-        {/* Top Header Card */}
+        {/* Minimalist Header — stripped all stats grids, progress bars, visualization cards */}
         <section className="rounded-[2.5rem] border border-white/10 bg-gradient-to-b from-slate-900 via-slate-950 to-black p-6 sm:p-10 shadow-2xl shadow-cyan-950/20 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none animate-pulse" />
           
@@ -440,35 +464,15 @@ export const ActiveDashboard = ({
               </p>
             </div>
 
-            {/* Quick Stats Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md">
-                <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Progress</p>
-                <p className="mt-1 text-2xl font-black text-cyan-400 tabular-nums">
-                  {topics.length > 0 ? Math.round((masteredIds.size / topics.length) * 100) : 0}%
-                </p>
-                <p className="text-xs text-slate-400">{masteredIds.size} of {topics.length} Mastered</p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md">
-                <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Marks Secured</p>
-                <p className="mt-1 text-2xl font-black text-emerald-400 tabular-nums">
-                  +{masteredMarks} / {totalMarks}
-                </p>
-                <p className="text-xs text-slate-400">High-yield weightage</p>
-              </div>
-
-              <div className="col-span-2 sm:col-span-1 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md flex flex-col justify-between">
-                <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Plan Management</p>
-                <Button
-                  onClick={handleResetPlan}
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 text-xs border-cyan-400/30 text-cyan-300 hover:bg-cyan-400/10 hover:text-white rounded-xl gap-1.5 w-full font-semibold"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" /> Reset / Edit Setup
-                </Button>
-              </div>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={handleResetPlan}
+                variant="outline"
+                size="sm"
+                className="text-xs border-cyan-400/30 text-cyan-300 hover:bg-cyan-400/10 hover:text-white rounded-xl gap-1.5 font-semibold"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Reset / Edit Setup
+              </Button>
             </div>
           </div>
         </section>
@@ -512,22 +516,13 @@ export const ActiveDashboard = ({
               Materials & PYQs ({uploadedMaterials.length})
             </button>
           </div>
-
-          <Button
-            onClick={handleResetPlan}
-            variant="ghost"
-            className="text-xs text-slate-400 hover:text-cyan-400 gap-1.5"
-          >
-            <RotateCcw className="h-3.5 w-3.5" /> Re-create Plan
-          </Button>
         </div>
 
-        {/* TAB 1: ROADMAP & TOPICS */}
+        {/* TAB 1: ROADMAP & TOPICS — Minimalist vertical topic card stack */}
         {activeTab === "roadmap" && (
           <section className="mt-6 space-y-6">
             {/* Filter & Search Toolbar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-zinc-950/60 p-4 rounded-2xl border border-white/10">
-              {/* Search bar */}
               <div className="relative flex-1">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <Input
@@ -538,7 +533,6 @@ export const ActiveDashboard = ({
                 />
               </div>
 
-              {/* Subject filter dropdown */}
               <div className="flex items-center gap-2 flex-wrap">
                 <Filter className="h-4 w-4 text-slate-400 shrink-0" />
                 <button
@@ -566,7 +560,6 @@ export const ActiveDashboard = ({
                 ))}
               </div>
 
-              {/* Status filter */}
               <div className="flex rounded-xl bg-zinc-900 p-1 border border-white/10 shrink-0">
                 {(["all", "pending", "mastered"] as const).map((st) => (
                   <button
@@ -582,7 +575,7 @@ export const ActiveDashboard = ({
               </div>
             </div>
 
-            {/* Topic List */}
+            {/* Minimalist Vertical Topic Card Stack */}
             {isLoading ? (
               <div className="rounded-3xl border border-white/10 bg-white/5 p-12 text-center text-slate-400">
                 Loading your personalized roadmap...
@@ -592,72 +585,69 @@ export const ActiveDashboard = ({
                 No topics match your current filters. Try resetting search or filters.
               </div>
             ) : (
-              <div className="grid gap-4">
+              <div className="grid gap-3">
                 {filteredTopics.map((topic) => {
                   const isMastered = masteredIds.has(topic.id);
                   return (
                     <div
                       key={topic.id}
                       onClick={() => openTopic(topic)}
-                      className={`group cursor-pointer rounded-3xl border p-6 transition-all duration-300 hover:-translate-y-0.5 ${
+                      className={`group cursor-pointer rounded-2xl border p-5 transition-all duration-300 ${
                         isMastered
                           ? "border-emerald-500/30 bg-emerald-950/10 hover:border-emerald-500/50"
                           : "border-white/10 bg-zinc-900/60 hover:border-cyan-400/40 hover:bg-zinc-900/90"
                       }`}
                     >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2.5">
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-0.5 text-xs font-bold uppercase tracking-wider text-cyan-300">
-                              <Crown className="h-3 w-3" /> Priority {topic.priority_order ?? "-"}
-                            </span>
-                            <span className="text-xs font-semibold text-slate-400 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">
-                              {topic.subject}
-                            </span>
-                            {isMastered && (
-                              <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-400/10 px-2.5 py-0.5 rounded-full border border-emerald-400/30">
-                                <CheckCircle2 className="h-3.5 w-3.5" /> Mastered
-                              </span>
-                            )}
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-4 min-w-0">
+                          {/* Priority indicator — compact */}
+                          <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-bold text-sm">
+                            #{topic.priority_order ?? "-"}
                           </div>
 
-                          <h3 className="text-xl font-bold tracking-tight text-white transition-colors group-hover:text-cyan-300">
-                            {topic.name}
-                          </h3>
-
-                          {topic.explanation && (
-                            <p className="text-xs text-slate-400 line-clamp-1">
-                              {topic.explanation}
-                            </p>
-                          )}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-semibold text-slate-400 truncate max-w-[120px]">
+                                {topic.subject}
+                              </span>
+                              {isMastered && (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full">
+                                  <CheckCircle2 className="h-3 w-3" /> Mastered
+                                </span>
+                              )}
+                            </div>
+                            <h3 className="text-base font-bold tracking-tight text-white truncate max-w-md group-hover:text-cyan-300 transition-colors">
+                              {topic.name}
+                            </h3>
+                          </div>
                         </div>
 
-                        <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 border-t sm:border-t-0 pt-3 sm:pt-0 border-white/5">
-                          <div className="text-right">
-                            <span className="inline-flex items-center rounded-full bg-emerald-400/15 px-3 py-1 text-sm font-bold text-emerald-300">
-                              +{topic.marks_impact ?? 0} Marks
-                            </span>
-                          </div>
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          {/* Prominent Marks Impact Badge */}
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3.5 py-1.5 text-sm font-bold text-amber-300 border border-amber-400/20 shadow-sm">
+                            <TrendingUp className="h-3.5 w-3.5" />
+                            +{topic.marks_impact ?? 0} Marks
+                          </span>
 
                           <Button
                             type="button"
                             size="sm"
                             variant={isMastered ? "secondary" : "outline"}
                             onClick={(e) => handleToggleMastered(topic.id, e)}
-                            className="rounded-xl text-xs gap-1.5 border-white/10 hover:border-cyan-400"
+                            className="rounded-xl text-xs gap-1.5 border-white/10 hover:border-cyan-400 h-9 px-3"
                           >
                             {isMastered ? (
                               <>
-                                <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Done
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Done
                               </>
                             ) : (
                               <>
-                                <Circle className="h-4 w-4 text-slate-400" /> Mark Mastered
+                                <Circle className="h-3.5 w-3.5 text-slate-400" /> Mark
                               </>
                             )}
                           </Button>
 
-                          <ChevronRight className="h-5 w-5 text-slate-500 group-hover:text-cyan-300 transition-transform group-hover:translate-x-1" />
+                          <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-cyan-300 transition-transform group-hover:translate-x-1" />
                         </div>
                       </div>
                     </div>
@@ -710,7 +700,7 @@ export const ActiveDashboard = ({
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <span className="text-xs font-bold text-emerald-400 bg-emerald-400/10 px-2.5 py-1 rounded-full border border-emerald-400/20">
+                      <span className="text-xs font-bold text-amber-400 bg-amber-400/10 px-2.5 py-1 rounded-full border border-amber-400/20">
                         +{item.marks} Marks
                       </span>
                       <Button
@@ -739,7 +729,6 @@ export const ActiveDashboard = ({
                 </p>
               </div>
 
-              {/* Upload Dropzone */}
               <label className="flex flex-col items-center justify-center border-2 border-dashed border-white/20 hover:border-cyan-400/50 rounded-2xl p-6 bg-zinc-900/50 cursor-pointer transition">
                 <input
                   type="file"
@@ -756,7 +745,6 @@ export const ActiveDashboard = ({
                 <p className="text-xs text-slate-400 mt-1">PDF, DOCX, TXT supported</p>
               </label>
 
-              {/* List of uploaded materials */}
               {uploadedMaterials.length === 0 ? (
                 <p className="text-sm text-slate-500 text-center py-4">No uploaded materials attached yet.</p>
               ) : (
@@ -787,12 +775,12 @@ export const ActiveDashboard = ({
         )}
       </main>
 
-      {/* TOPIC MASTERY DRAWER / MODAL */}
+      {/* TOPIC MASTERY DRAWER / MODAL — Pristine, distraction-free view */}
       {selectedTopic && (
         <div className="fixed inset-0 z-50 flex min-h-screen flex-col bg-black/90 backdrop-blur-2xl animate-in fade-in duration-300">
           {/* Drawer Header */}
           <div className="border-b border-white/10 bg-zinc-950/90 px-6 py-4">
-            <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
+            <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <button
                   type="button"
@@ -826,7 +814,7 @@ export const ActiveDashboard = ({
           </div>
 
           {/* Drawer Content */}
-          <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-6 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-6 py-6 overflow-y-auto">
             {/* Drawer Tab Switcher */}
             <div className="flex gap-2 rounded-2xl border border-white/10 bg-zinc-900 p-1 shrink-0">
               <button
@@ -836,7 +824,7 @@ export const ActiveDashboard = ({
                   drawerTab === "study" ? "bg-white text-slate-950" : "text-slate-300 hover:text-white"
                 }`}
               >
-                High-Yield Study Guide
+                Mastery Guide
               </button>
               <button
                 type="button"
@@ -845,11 +833,11 @@ export const ActiveDashboard = ({
                   drawerTab === "quiz" ? "bg-white text-slate-950" : "text-slate-300 hover:text-white"
                 }`}
               >
-                Practice Quiz ({quizQuestions.length} Questions)
+                Interactive Quiz ({quizQuestions.length} Questions)
               </button>
             </div>
 
-            {/* TAB: STUDY GUIDE */}
+            {/* TAB: MASTERY GUIDE — Clean, distraction-free */}
             {drawerTab === "study" && (
               <div className="flex-1 rounded-3xl border border-white/10 bg-zinc-900/80 p-6 sm:p-8 space-y-6">
                 <div className="flex items-center gap-2 text-cyan-400">
@@ -863,7 +851,7 @@ export const ActiveDashboard = ({
               </div>
             )}
 
-            {/* TAB: QUIZ */}
+            {/* TAB: INTERACTIVE QUIZ */}
             {drawerTab === "quiz" && (
               <div className="flex-1 rounded-3xl border border-white/10 bg-zinc-900/80 p-6 sm:p-8 space-y-6">
                 {quizMastered ? (
